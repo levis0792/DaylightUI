@@ -1,0 +1,126 @@
+name: Update zhCN translation
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: zhcn-translation
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: dayightt/DaylightUI
+      TARGET_REPO: ${{ github.repository }}
+      TARGET_BASE: main
+      ZHCN_BRANCH: automation/zhcn
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Merge the author's current main
+        id: sync
+        run: |
+          git config user.name "DarkUI zhCN bot"
+          git config user.email "zhcn-bot@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream main
+          git merge --ff-only upstream/main
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Update the fork main branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" HEAD:main
+
+      - name: Create the automation branch
+        shell: bash
+        run: |
+          git switch -c "${ZHCN_BRANCH}"
+
+      - name: Scan for missing zhCN strings
+        id: missing
+        shell: bash
+        run: |
+          if node tools/zhcn.js check | tee /tmp/zhcn-check.txt | grep -q "Untranslated: 0"; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Translate missing strings with AI
+        if: steps.missing.outputs.needed == 'true'
+        run: node tools/zhcn.js translate
+
+      - name: Validate the locale
+        run: node tools/zhcn.js check
+
+      - name: Upload translation review report
+        if: steps.missing.outputs.needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhcn-ai-review
+          path: tools/reports/zhcn-ai.json
+          if-no-files-found: ignore
+
+      - name: Commit the updated locale
+        id: changes
+        env:
+          UPSTREAM_SHA: ${{ steps.sync.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if git diff --quiet -- Locales/zhCN.lua; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git add Locales/zhCN.lua
+          git commit -m "locale(zhCN): update from upstream ${UPSTREAM_SHA}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update the pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          existing=$(gh pr list --repo "${UPSTREAM_REPO}" --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" --state open --json number --jq '.[0].number // empty')
+          body=$(printf '%s\n' \
+            'Automated Simplified Chinese localization update.' \
+            '' \
+            'This PR refreshes `Locales/zhCN.lua` from the current upstream sources.' \
+            'Existing translations are reused as translation memory; only missing' \
+            'strings are sent through the configured AI endpoint.' \
+            '' \
+            'The workflow validates no missing UI strings, no duplicate keys,' \
+            'matching printf placeholders, and non-empty translations.' \
+            '' \
+            'No source files, settings or behavior are changed.')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "${UPSTREAM_REPO}" --body "$body"
+          else
+            gh pr create --repo "${UPSTREAM_REPO}" \
+              --base main --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
+              --title "locale(zhCN): automated update" --body "$body"
+          fi
