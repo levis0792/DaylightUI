@@ -99,28 +99,9 @@ jobs:
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create or update the pull request
+      - name: Open the pull request page
         if: steps.changes.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          existing=$(gh pr list --repo "${UPSTREAM_REPO}" --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" --state open --json number --jq '.[0].number // empty')
-          body=$(printf '%s\n' \
-            'Automated Simplified Chinese localization update.' \
-            '' \
-            'This PR refreshes `Locales/zhCN.lua` from the current upstream sources.' \
-            'Existing translations are reused as translation memory; only missing' \
-            'strings are sent through the configured AI endpoint.' \
-            '' \
-            'The workflow validates no missing UI strings, no duplicate keys,' \
-            'matching printf placeholders, and non-empty translations.' \
-            '' \
-            'No source files, settings or behavior are changed.')
-          if [ -n "$existing" ]; then
-            gh pr edit "$existing" --repo "${UPSTREAM_REPO}" --body "$body"
-          else
-            gh pr create --repo "${UPSTREAM_REPO}" \
-              --base main --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
-              --title "locale(zhCN): automated update" --body "$body"
-          fi
+          echo "::notice::The automation branch was pushed. Open this page to create or update the PR:"
+          echo "https://github.com/${UPSTREAM_REPO}/compare/main...${TARGET_REPO%%/*}:${ZHCN_BRANCH}?expand=1"
