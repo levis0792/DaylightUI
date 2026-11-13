@@ -39,6 +39,47 @@ function readLocale() {
   return { src, entries, duplicates };
 }
 
+const ALLOWED_ENGLISH = new Set([
+  "PvP", "PvE", "RP", "DPS", "HPS", "NPC", "UI", "AFK", "AP", "AOE", "AoE",
+  "GUID", "ID", "PVP", "PVE", "Daylight UI", "Daylight", "TW", "CN", "US", "EU",
+  "Alt", "Ctrl", "Shift", "Esc",
+  // AddOn and font names stay as published so players can find them.
+  "Ace3", "Attune", "Baganator", "Bagnon", "BuffLedger", "Deadly Boss Mods",
+  "Dewdrop", "OPie", "Plater", "Platynator", "PrettyTooltip", "Questie",
+  "RestedXP Guides", "Threat Plates", "Archivo Narrow", "Arial Narrow",
+  "Barlow Condensed", "Expressway", "Fira Sans", "Lato", "PT Sans Narrow",
+  "Poppins", "Russo One", "DaylightUI", "DaylightUI Discord",
+  // Keyboard labels are shown in uppercase by the game.
+  "ALT", "CTRL", "SHIFT",
+]);
+
+function hasHan(s) {
+  return /[\u3400-\u9fff]/.test(String(s));
+}
+
+function englishLeftover(key, value) {
+  if (!value || !/[A-Za-z]/.test(value)) return false;
+  if (hasHan(value)) return false;
+  const stripped = String(value)
+    .replace(/\|c[0-9a-fA-F]{8}|\|r|\|T[^|]*\|t/g, "")
+    .replace(/%(?:%|[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[/_.[\]{}()<>:=+*\-]+/g, " ")
+    .trim();
+  if (!stripped) return false;
+  const words = stripped.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
+  if (!words.length) return false;
+  if (ALLOWED_ENGLISH.has(String(value).trim())) return false;
+  if (String(key).startsWith("Daylight UI: ") && String(value).startsWith("Daylight UI")) return false;
+  if (words.every((w) => ALLOWED_ENGLISH.has(w))) return false;
+  // Proper names and slash commands intentionally stay as written.
+  if (String(key).startsWith("/") || String(value).startsWith("/")) return false;
+  if (/^Daylight UI\s*:/i.test(String(value))) return false;
+  if (/^[\w.-]+\.(?:png|tga|blp|ttf|otf)$/i.test(String(value))) return false;
+  if (/^(?:shop|tab|filter|none|auto)$/i.test(String(value))) return false;
+  return words.some((w) => w.length >= 2);
+}
+
 function catalog() {
   return extract(root);
 }
@@ -48,13 +89,18 @@ function report({ missingOnly = false } = {}) {
   const { entries, duplicates } = readLocale();
   const missing = [...cat.keys()].filter((k) => !entries.has(k));
   const bad = [...entries].filter(([k, v]) => !v.trim() || !formatOk(k, v));
+  const untranslatedValues = [...cat.keys()].filter((k) => entries.has(k) && englishLeftover(k, entries.get(k)));
+  const english = untranslatedValues;
   console.log(`Current UI strings: ${cat.size}`);
   console.log(`zhCN entries: ${entries.size}`);
-  console.log(`Untranslated: ${missing.length}`);
+  console.log(`Missing keys: ${missing.length}`);
+  console.log(`Untranslated: ${missing.length + english.length}`);
+  console.log(`English leftovers: ${english.length}`);
   console.log(`Duplicate keys: ${duplicates.length}`);
   console.log(`Format/empty errors: ${bad.length}`);
   if (duplicates.length) for (const k of duplicates) console.log(`  duplicate ${JSON.stringify(k)}`);
   if (bad.length) for (const [k, v] of bad.slice(0, 80)) console.log(`  invalid ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
+  if (english.length && !missingOnly) for (const k of english) console.log(`  english ${JSON.stringify(k)} -> ${JSON.stringify(entries.get(k))}`);
   if (missing.length && !missingOnly) for (const k of missing) console.log(`  missing ${JSON.stringify(k)}`);
   if (missing.length) {
     const out = path.join(root, "tools", "reports", "zhcn-missing.tsv");
@@ -62,27 +108,34 @@ function report({ missingOnly = false } = {}) {
     fs.writeFileSync(out, missing.map((k) => `${JSON.stringify(k)}\t${cat.get(k).refs.join(",")}`).join("\n") + "\n", "utf8");
     console.log(`Report: ${path.relative(root, out)}`);
   }
-  return { cat, entries, duplicates, missing, bad };
+  return { cat, entries, duplicates, missing, bad, english };
 }
 
-function applyData(data, label) {
+function applyData(data, label, opts = {}) {
   const { src, entries } = readLocale();
-  const toAdd = Object.entries(data).filter(([k]) => !entries.has(k));
-  const bad = toAdd.filter(([k, v]) => typeof v !== "string" || !v.trim() || !formatOk(k, v));
+  const toApply = Object.entries(data).filter(([k]) => opts.replace || !entries.has(k));
+  const bad = toApply.filter(([k, v]) => typeof v !== "string" || !v.trim() || !formatOk(k, v));
   if (bad.length) {
     console.error(`Refusing to apply ${bad.length} invalid entries:`);
     for (const [k, v] of bad.slice(0, 40)) console.error(`  ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
     process.exit(1);
   }
   let out = src.replace(/\n?$/, "\n");
+  for (const [k, v] of toApply) {
+    if (!entries.has(k)) continue;
+    const quoted = luaQuote(k).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const lineRe = new RegExp("^L\\[" + quoted + "\\]\\s*=\\s*\"(?:\\\\.|[^\"\\\\])*\"\\s*$", "m");
+    out = out.replace(lineRe, `L[${luaQuote(k)}] = ${luaQuote(v)}`);
+  }
+  const toAdd = toApply.filter(([k]) => !entries.has(k));
   if (toAdd.length) {
     out += `\n-- DaylightUI translations from ${label}.\n`;
     out += toAdd.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       .map(([k, v]) => `L[${luaQuote(k)}] = ${luaQuote(v)}`).join("\n") + "\n";
   }
   fs.writeFileSync(localePath, out, "utf8");
-  console.log(`Added ${toAdd.length} entries; ${Object.keys(data).length - toAdd.length} already present.`);
-  return toAdd.length;
+  console.log(`Added ${toAdd.length} entries; ${toApply.length - toAdd.length} replaced.`);
+  return toApply.length;
 }
 
 function apply(file) {
@@ -182,13 +235,16 @@ async function translate() {
   const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, JSON.stringify(result, null, 2) + "\n", "utf8");
-  applyData(result, "AI translation");
+  applyData(result, "AI translation", { replace: true });
   report();
 }
 
 const cmd = process.argv[2] || "check";
 if (cmd === "missing") report({ missingOnly: true });
-else if (cmd === "check") report();
+else if (cmd === "check") {
+  const result = report();
+  if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length) process.exit(1);
+}
 else if (cmd === "apply") apply(process.argv[3]);
 else if (cmd === "translate") translate().catch((e) => { console.error(e.stack || e); process.exit(1); });
 else {
