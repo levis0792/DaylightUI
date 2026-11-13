@@ -51,18 +51,26 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "short=$short" >> "$GITHUB_OUTPUT"
 
+      - name: Stage the maintenance tools outside the PR branch
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/zhcn-tools"
+          mkdir -p "${RUNNER_TEMP}/zhcn-tools"
+          cp -a tools "${RUNNER_TEMP}/zhcn-tools/tools"
+
       - name: Create a clean PR branch
         shell: bash
         run: |
           git switch -C "${ZHCN_BRANCH}" upstream/main
-          git checkout main -- Locales/zhCN.lua tools/zhcn.js tools/zhcn-glossary.json tools/lib
+          git checkout main -- Locales/zhCN.lua
+          test -f Locales/zhCN.lua
 
       - name: Scan current coverage
         id: scan
         shell: bash
         run: |
           set +e
-          node tools/zhcn.js check | tee /tmp/zhcn-check.txt
+          ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check | tee /tmp/zhcn-check.txt
           code=${PIPESTATUS[0]}
           if grep -q "Untranslated: 0" /tmp/zhcn-check.txt; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
@@ -75,17 +83,21 @@ jobs:
 
       - name: Translate missing or untranslated strings
         if: steps.scan.outputs.needed == 'true'
-        run: node tools/zhcn.js translate
+        env:
+          ZHCN_ROOT: ${{ github.workspace }}
+        run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate
 
       - name: Validate the author-facing file strictly
-        run: node tools/zhcn.js check
+        env:
+          ZHCN_ROOT: ${{ github.workspace }}
+        run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
       - name: Upload translation review report
         if: steps.scan.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-ai-review-${{ steps.upstream.outputs.short }}
-          path: tools/reports/zhcn-ai.json
+          path: ${{ runner.temp }}/zhcn-tools/tools/reports/zhcn-ai.json
           if-no-files-found: ignore
 
       - name: Commit the translation
@@ -98,6 +110,10 @@ jobs:
           git config user.name "DarkUI zhCN bot"
           git config user.email "zhcn-bot@users.noreply.github.com"
           git add -f Locales/zhCN.lua
+          git diff --cached --name-only | grep -qx "Locales/zhCN.lua" || {
+            echo "::error::The translator changed an unexpected file."
+            exit 1
+          }
           if git diff --cached --quiet; then
             echo "No translation change for ${UPSTREAM_SHORT}"
             echo "changed=false" >> "$GITHUB_OUTPUT"

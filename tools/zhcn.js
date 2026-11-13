@@ -18,11 +18,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.resolve(__dirname, "..");
+const root = path.resolve(process.env.ZHCN_ROOT || path.join(__dirname, ".."));
 const localePath = path.join(root, "Locales", "zhCN.lua");
-const { extract } = require(path.join(root, "tools", "lib", "catalog"));
-const { luaQuote } = require(path.join(root, "tools", "lib", "lua"));
-const { formatOk, specifiers } = require(path.join(root, "tools", "lib", "format"));
+const toolRoot = path.resolve(__dirname, "..");
+const { extract } = require(path.join(toolRoot, "tools", "lib", "catalog"));
+const { luaQuote } = require(path.join(toolRoot, "tools", "lib", "lua"));
+const { formatOk, specifiers } = require(path.join(toolRoot, "tools", "lib", "format"));
 
 function readLocale() {
   const src = fs.readFileSync(localePath, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
@@ -165,7 +166,7 @@ async function requestBatch(batch, memory) {
   const model = process.env.OPENAI_MODEL || "deepseek-v4.1-flash";
   const context = [];
   for (const [k, v] of [...memory.exact].slice(-250)) context.push([k, v]);
-  const glossary = fs.existsSync(path.join(root, "tools", "zhcn-glossary.json"))
+  const glossary = fs.existsSync(path.join(toolRoot, "tools", "zhcn-glossary.json"))
     ? JSON.parse(fs.readFileSync(path.join(root, "tools", "zhcn-glossary.json"), "utf8"))
     : {};
   const system = [
