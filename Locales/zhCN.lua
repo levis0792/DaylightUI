@@ -6335,3 +6335,7 @@ L["You shoot %.1f%% faster."] = "你的射击速度提高 %.1f%%。"
 L["You swing %.1f%% faster."] = "你的挥击速度提高 %.1f%%。"
 L["Your attacks ignore %.0f of the target's armor."] = "你的攻击忽略目标 %.0f 点护甲。"
 L["Your spells ignore %.0f of the target's resistances."] = "你的法术忽略目标 %.0f 点抗性。"
+
+-- DaylightUI translations from AI translation.
+L["Chests, quest objects and your fishing bobber light up as you come near, dim from afar and bright once you can reach them. This changes a few of the game's interact settings while it's on, and gives them back when it's off."] = "当你靠近时，箱子、任务目标和你的钓鱼浮标会亮起，距离较远时变暗，可触及范围内则变亮。开启时会更改游戏的部分交互设置，关闭时会恢复。"
+L["Your accent color, or a color that says what the object is: gold for quests, blue for chests."] = "你的强调色，或表示物体类型的颜色：任务用金色，箱子用蓝色。"
