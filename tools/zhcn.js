@@ -106,12 +106,15 @@ function translationMemory(entries) {
 }
 
 async function requestBatch(batch, memory) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error("OPENAI_API_KEY is not set");
-  const base = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("API_KEY is not set");
+  const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
+  const model = process.env.OPENAI_MODEL || "deepseek-v4.1-flash";
   const context = [];
   for (const [k, v] of [...memory.exact].slice(-250)) context.push([k, v]);
+  const glossary = fs.existsSync(path.join(root, "tools", "zhcn-glossary.json"))
+    ? JSON.parse(fs.readFileSync(path.join(root, "tools", "zhcn-glossary.json"), "utf8"))
+    : {};
   const system = [
     "You translate World of Warcraft addon UI text from English to Simplified Chinese.",
     "Return only a JSON object mapping every input key to a Chinese string; no markdown.",
@@ -123,15 +126,15 @@ async function requestBatch(batch, memory) {
     "Do not translate slash commands, setting keys, font names, URLs or code identifiers.",
     "If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.",
     "Use the supplied reviewed pairs as translation memory for terminology.",
+    "Required glossary: " + JSON.stringify(glossary),
   ].join(" ");
   const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: batch }, null, 2);
   const res = await fetch(base + "/chat/completions", {
+    signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
     body: JSON.stringify({
       model,
-      temperature: 0.1,
-      response_format: { type: "json_object" },
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
     }),
   });
@@ -140,7 +143,9 @@ async function requestBatch(batch, memory) {
   let parsed;
   try {
     const data = JSON.parse(text);
-    parsed = JSON.parse(data.choices[0].message.content);
+    let content = data.choices[0].message.content.trim();
+    content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    parsed = JSON.parse(content);
   } catch (e) {
     throw new Error("AI returned invalid JSON: " + text.slice(0, 1000));
   }

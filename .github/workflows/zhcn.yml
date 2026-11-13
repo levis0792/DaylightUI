@@ -21,9 +21,9 @@ jobs:
       TARGET_REPO: ${{ github.repository }}
       TARGET_BASE: main
       ZHCN_BRANCH: automation/zhcn
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
-      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      API_KEY: ${{ secrets.API_KEY }}
+      OPENAI_BASE_URL: https://ai.levis0792.cn:18787/v1
+      OPENAI_MODEL: deepseek-v4.1-flash
     steps:
       - name: Check out fork
         uses: actions/checkout@v4
