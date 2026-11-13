@@ -19,13 +19,12 @@ jobs:
     env:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
-      TARGET_BASE: main
       ZHCN_BRANCH: automation/zhcn
       API_KEY: ${{ secrets.API_KEY }}
       OPENAI_BASE_URL: https://ai.levis0792.cn:18787/v1
       OPENAI_MODEL: deepseek-v4.1-flash
     steps:
-      - name: Check out fork
+      - name: Check out the maintenance branch
         uses: actions/checkout@v4
         with:
           ref: main
@@ -36,27 +35,19 @@ jobs:
         with:
           node-version: 22
 
-      - name: Merge the author's current main
-        id: sync
+      - name: Fetch the author's current main
+        id: upstream
+        shell: bash
         run: |
-          git config user.name "DarkUI zhCN bot"
-          git config user.email "zhcn-bot@users.noreply.github.com"
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream main
-          git merge --no-edit upstream/main
-          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short upstream/main)" >> "$GITHUB_OUTPUT"
 
-      - name: Update the fork main branch
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Create a clean branch from the author's main
         shell: bash
         run: |
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" HEAD:main
-
-      - name: Create the automation branch
-        shell: bash
-        run: |
-          git switch -c "${ZHCN_BRANCH}"
+          git switch -C "${ZHCN_BRANCH}" upstream/main
+          git checkout main -- Locales/zhCN.lua tools/zhcn.js tools/zhcn-glossary.json tools/lib translations
 
       - name: Scan for missing zhCN strings
         id: missing
@@ -83,10 +74,10 @@ jobs:
           path: tools/reports/zhcn-ai.json
           if-no-files-found: ignore
 
-      - name: Commit the updated locale
+      - name: Commit the translation
         id: changes
         env:
-          UPSTREAM_SHA: ${{ steps.sync.outputs.sha }}
+          UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -99,9 +90,32 @@ jobs:
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Open the pull request page
+      - name: Create or update the pull request
         if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
         shell: bash
         run: |
-          echo "::notice::The automation branch was pushed. Open this page to create or update the PR:"
-          echo "https://github.com/${UPSTREAM_REPO}/compare/main...${TARGET_REPO%%/*}:${ZHCN_BRANCH}?expand=1"
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::GH_PR_TOKEN is not configured."
+            exit 1
+          fi
+          existing=$(gh pr list --repo "${UPSTREAM_REPO}" --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" --state open --json number --jq '.[0].number // empty')
+          body=$(printf '%s\n' \
+            'Automated Simplified Chinese localization update.' \
+            '' \
+            'This PR refreshes `Locales/zhCN.lua` from the current upstream sources.' \
+            'Existing translations are reused as translation memory; only missing' \
+            'strings are sent through the configured AI endpoint.' \
+            '' \
+            'The workflow validates no missing UI strings, no duplicate keys,' \
+            'matching printf placeholders, and non-empty translations.' \
+            '' \
+            'No source files, settings or behavior are changed.')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "${UPSTREAM_REPO}" --body "$body"
+          else
+            gh pr create --repo "${UPSTREAM_REPO}" \
+              --base main --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
+              --title "locale(zhCN): automated update" --body "$body"
+          fi
