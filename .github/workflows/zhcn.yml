@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: zhcn-translation
@@ -22,11 +21,12 @@ jobs:
     env:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
+      ZHCN_BRANCH: automation/zhcn
       API_KEY: ${{ secrets.API_KEY }}
       OPENAI_BASE_URL: https://ai.levis0792.cn:18787/v1
       OPENAI_MODEL: deepseek-v4.1-flash
     steps:
-      - name: Check out the maintenance branch
+      - name: Check out the translation maintenance branch
         uses: actions/checkout@v4
         with:
           ref: main
@@ -50,34 +50,38 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "short=$short" >> "$GITHUB_OUTPUT"
-          echo "branch=automation/zhcn-$short" >> "$GITHUB_OUTPUT"
 
       - name: Create a clean PR branch
         shell: bash
         run: |
-          git switch -C "${{ steps.upstream.outputs.branch }}" upstream/main
-          git checkout main -- Locales/zhCN.lua tools/zhcn.js tools/zhcn-glossary.json tools/lib translations
+          git switch -C "${ZHCN_BRANCH}" upstream/main
+          git checkout main -- Locales/zhCN.lua tools/zhcn.js tools/zhcn-glossary.json tools/lib
 
-      - name: Scan for missing zhCN strings
-        id: missing
+      - name: Scan current coverage
+        id: scan
         shell: bash
         run: |
+          set +e
           node tools/zhcn.js check | tee /tmp/zhcn-check.txt
+          code=${PIPESTATUS[0]}
           if grep -q "Untranslated: 0" /tmp/zhcn-check.txt; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
+          if [ "$code" -ne 0 ] && [ "$(grep -c '^Missing keys:\|^English leftovers:' /tmp/zhcn-check.txt)" -eq 0 ]; then
+            exit "$code"
+          fi
 
-      - name: Translate missing strings with AI
-        if: steps.missing.outputs.needed == 'true'
+      - name: Translate missing or untranslated strings
+        if: steps.scan.outputs.needed == 'true'
         run: node tools/zhcn.js translate
 
-      - name: Validate the locale
+      - name: Validate the author-facing file strictly
         run: node tools/zhcn.js check
 
       - name: Upload translation review report
-        if: steps.missing.outputs.needed == 'true'
+        if: steps.scan.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-ai-review-${{ steps.upstream.outputs.short }}
@@ -100,14 +104,23 @@ jobs:
             exit 0
           fi
           git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${{ steps.upstream.outputs.branch }}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the PR contains only the locale
+        if: steps.changes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          changed=$(git diff --name-only upstream/main...HEAD)
+          test "$changed" = "Locales/zhCN.lua" || {
+            echo "::error::The PR must change only Locales/zhCN.lua; got: $changed"
+            exit 1
+          }
 
       - name: Create the pull request
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
-          HEAD_BRANCH: ${{ steps.upstream.outputs.branch }}
           UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
         shell: bash
         run: |
@@ -115,18 +128,35 @@ jobs:
             echo "::error::GH_PR_TOKEN is not configured."
             exit 1
           fi
-          existing=$(gh pr list --repo "${UPSTREAM_REPO}" --head "${TARGET_REPO%%/*}:${HEAD_BRANCH}" --state open --json number --jq '.[0].number // empty')
+          existing=$(gh pr list --repo "${UPSTREAM_REPO}" --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" --state open --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
-            echo "PR #$existing already open"
-            exit 0
+            gh pr edit "$existing" --repo "${UPSTREAM_REPO}" --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" --body "$(cat <<EOF
+          Automated Simplified Chinese localization update for upstream `${UPSTREAM_SHORT}`.
+
+          The coverage checker scans literal locale keys, option labels/descriptions, helper arguments, cached choice tables and concatenated tooltip text. It also rejects entries that still contain English.
+
+          Validation:
+          - Missing keys: 0
+          - English leftovers: 0
+          - Duplicate keys: 0
+          - Format/empty errors: 0
+
+          Only `Locales/zhCN.lua` changes. No source files, settings or behavior are changed.
+          EOF
+          )"
+          else
+            gh pr create --repo "${UPSTREAM_REPO}" --base main --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" --body "$(cat <<EOF
+          Automated Simplified Chinese localization update for upstream `${UPSTREAM_SHORT}`.
+
+          The coverage checker scans literal locale keys, option labels/descriptions, helper arguments, cached choice tables and concatenated tooltip text. It also rejects entries that still contain English.
+
+          Validation:
+          - Missing keys: 0
+          - English leftovers: 0
+          - Duplicate keys: 0
+          - Format/empty errors: 0
+
+          Only `Locales/zhCN.lua` changes. No source files, settings or behavior are changed.
+          EOF
+          )"
           fi
-          gh pr create --repo "${UPSTREAM_REPO}" \
-            --base main --head "${TARGET_REPO%%/*}:${HEAD_BRANCH}" \
-            --title "locale(zhCN): automated update for ${UPSTREAM_SHORT}" \
-            --body "$(printf '%s\n' \
-              'Automated Simplified Chinese localization update.' \
-              '' \
-              'Existing translations are reused as translation memory; only missing strings are sent to the configured AI endpoint.' \
-              'The workflow validates missing keys, duplicate keys, placeholders and empty values before opening this PR.' \
-              '' \
-              'Only `Locales/zhCN.lua` changes in this PR. No source files, settings or behavior are changed.')"
