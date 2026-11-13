@@ -43,7 +43,7 @@ jobs:
           git config user.email "zhcn-bot@users.noreply.github.com"
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream main
-          git merge --ff-only upstream/main
+          git merge --no-edit upstream/main
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Update the fork main branch
