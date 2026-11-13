@@ -1,12 +1,16 @@
 name: Update zhCN translation
 
 on:
-  schedule:
-    - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      upstream_sha:
+        description: "Upstream main SHA to translate"
+        required: false
+        type: string
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: zhcn-translation
@@ -18,7 +22,6 @@ jobs:
     env:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
-      ZHCN_BRANCH: codex/zhcn-1.7
       API_KEY: ${{ secrets.API_KEY }}
       OPENAI_BASE_URL: https://ai.levis0792.cn:18787/v1
       OPENAI_MODEL: deepseek-v4.1-flash
@@ -40,19 +43,27 @@ jobs:
         run: |
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream main
-          echo "sha=$(git rev-parse --short upstream/main)" >> "$GITHUB_OUTPUT"
+          sha=$(git rev-parse upstream/main)
+          short=$(git rev-parse --short "$sha")
+          if [ -n "${{ inputs.upstream_sha }}" ] && [ "${{ inputs.upstream_sha }}" != "$sha" ]; then
+            echo "::warning::Requested SHA changed; using current upstream $sha"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+          echo "branch=automation/zhcn-$short" >> "$GITHUB_OUTPUT"
 
       - name: Create a clean PR branch
         shell: bash
         run: |
-          git switch -C "${ZHCN_BRANCH}" upstream/main
+          git switch -C "${{ steps.upstream.outputs.branch }}" upstream/main
           git checkout main -- Locales/zhCN.lua tools/zhcn.js tools/zhcn-glossary.json tools/lib translations
 
       - name: Scan for missing zhCN strings
         id: missing
         shell: bash
         run: |
-          if node tools/zhcn.js check | tee /tmp/zhcn-check.txt | grep -q "Untranslated: 0"; then
+          node tools/zhcn.js check | tee /tmp/zhcn-check.txt
+          if grep -q "Untranslated: 0" /tmp/zhcn-check.txt; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
@@ -69,13 +80,14 @@ jobs:
         if: steps.missing.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: zhcn-ai-review
+          name: zhcn-ai-review-${{ steps.upstream.outputs.short }}
           path: tools/reports/zhcn-ai.json
           if-no-files-found: ignore
 
       - name: Commit the translation
+        id: changes
         env:
-          UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
+          UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -83,8 +95,38 @@ jobs:
           git config user.email "zhcn-bot@users.noreply.github.com"
           git add -f Locales/zhCN.lua
           if git diff --cached --quiet; then
-            echo "No translation change for ${UPSTREAM_SHA}"
+            echo "No translation change for ${UPSTREAM_SHORT}"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git commit -m "locale(zhCN): update from upstream ${UPSTREAM_SHA}"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
+          git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${{ steps.upstream.outputs.branch }}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create the pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+          HEAD_BRANCH: ${{ steps.upstream.outputs.branch }}
+          UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
+        shell: bash
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::GH_PR_TOKEN is not configured."
+            exit 1
+          fi
+          existing=$(gh pr list --repo "${UPSTREAM_REPO}" --head "${TARGET_REPO%%/*}:${HEAD_BRANCH}" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open"
+            exit 0
+          fi
+          gh pr create --repo "${UPSTREAM_REPO}" \
+            --base main --head "${TARGET_REPO%%/*}:${HEAD_BRANCH}" \
+            --title "locale(zhCN): automated update for ${UPSTREAM_SHORT}" \
+            --body "$(printf '%s\n' \
+              'Automated Simplified Chinese localization update.' \
+              '' \
+              'Existing translations are reused as translation memory; only missing strings are sent to the configured AI endpoint.' \
+              'The workflow validates missing keys, duplicate keys, placeholders and empty values before opening this PR.' \
+              '' \
+              'Only `Locales/zhCN.lua` changes in this PR. No source files, settings or behavior are changed.')"

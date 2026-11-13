@@ -1,0 +1,55 @@
+name: Monitor DaylightUI main
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: daylightui-upstream-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the author's current main SHA
+        id: upstream
+        shell: bash
+        run: |
+          sha=$(git ls-remote https://github.com/dayightt/DaylightUI.git refs/heads/main | awk '{print $1}')
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the last processed SHA
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: upstream-sha.txt
+          key: daylightui-upstream-sha-${{ steps.upstream.outputs.sha }}
+
+      - name: Trigger the translation workflow only on a new upstream commit
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
+        shell: bash
+        run: |
+          gh workflow run zhcn.yml --repo "$GITHUB_REPOSITORY" --ref main -f upstream_sha="$UPSTREAM_SHA"
+
+      - name: Remember this SHA after triggering
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          printf '%s\n' "${{ steps.upstream.outputs.sha }}" > upstream-sha.txt
+
+      - name: Save the processed SHA
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: upstream-sha.txt
+          key: daylightui-upstream-sha-${{ steps.upstream.outputs.sha }}
