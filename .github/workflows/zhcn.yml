@@ -214,13 +214,13 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
-          UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
         shell: bash
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::GH_PR_TOKEN is not configured; the automation branch was pushed, but no PR can be created."
             exit 1
           fi
+          UPSTREAM_SHORT=$(git rev-parse --short upstream/main)
 
           existing=$(gh pr list \
             --repo "${UPSTREAM_REPO}" \
@@ -247,10 +247,10 @@ jobs:
           Validation before the commit and PR:
           - Coverage: no missing keys, English leftovers, duplicate keys, or format errors
           - Glossary and AI retry regression test: passed
-          - Author's native locale test: \`luajit tests/run.lua --only test_locale\`: passed
+          - Author's native locale test: `luajit tests/run.lua --only test_locale`: passed
 
-          Only \`Locales/zhCN.lua\` changes in the PR. No source files, settings or behavior
-          are changed. Later author updates merge the latest \`main\` into this branch and
+          Only `Locales/zhCN.lua` changes in the PR. No source files, settings or behavior
+          are changed. Later author updates merge the latest `main` into this branch and
           translate whatever new text appears; if there is no new visible text, the diff
           stays unchanged.
           EOF
