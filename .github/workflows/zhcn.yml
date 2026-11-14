@@ -1,10 +1,8 @@
 name: Update zhCN translation
 
 on:
-  # Bump this comment when the cron needs re-registering with GitHub.
-  schedule:
-    # Avoid :00, the busiest minute; GitHub may delay or drop runs then.
-    - cron: "7,22,37,52 * * * *"
+  # Triggered every 30 minutes by the NAS. GitHub's own cron is unreliable on
+  # forks, so the schedule block was removed on purpose.
   workflow_dispatch:
     inputs:
       upstream_sha:
