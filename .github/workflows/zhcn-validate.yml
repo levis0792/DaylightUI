@@ -1,9 +1,12 @@
 name: Validate zhCN
 
 on:
-  push:
-    branches:
-      - codex/zhcn-runtime-keys
+  pull_request:
+    paths:
+      - "Locales/zhCN.lua"
+      - "tools/zhcn.js"
+      - "tools/lib/**"
+  workflow_dispatch:
 
 jobs:
   validate:
