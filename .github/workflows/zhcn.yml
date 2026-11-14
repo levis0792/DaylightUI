@@ -212,7 +212,7 @@ jobs:
             exit 1
           }
 
-      - name: Create the pull request
+      - name: Ensure the pull request exists
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
@@ -222,49 +222,29 @@ jobs:
             echo "::error::GH_PR_TOKEN is not configured; the automation branch was pushed, but no PR can be created."
             exit 1
           fi
-          UPSTREAM_SHORT=$(git rev-parse --short upstream/main)
 
           existing=$(gh pr list \
             --repo "${UPSTREAM_REPO}" \
             --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
             --state open \
-            --json number \
-            --jq '.[0].number // empty')
-
-          if [ -z "$existing" ]; then
-            open_count=$(gh pr list --repo "${UPSTREAM_REPO}" --state open --limit 100 --json number --jq 'length')
-            if [ "$open_count" -ge 50 ]; then
-              echo "::error::The author already has ${open_count} open PRs; cannot create a new one."
-              exit 1
-            fi
-          fi
-
-          body=$(cat <<EOF
-          Automated Simplified Chinese localization update for upstream `${UPSTREAM_SHORT}`.
-
-          The workflow is designed to stay current as the author publishes new releases:
-          it reuses one automation branch and updates the same PR instead of opening a
-          new PR for every upstream commit.
-
-          Validation before the commit and PR:
-          - Coverage: no missing keys, English leftovers, duplicate keys, or format errors
-          - Glossary and AI retry regression test: passed
-          - Author's native locale test: `luajit tests/run.lua --only test_locale`: passed
-
-          Only `Locales/zhCN.lua` changes in the PR. No source files, settings or behavior
-          are changed. Later author updates merge the latest `main` into this branch and
-          translate whatever new text appears; if there is no new visible text, the diff
-          stays unchanged.
-          EOF
-          )
+            --json number,url \
+            --jq '.[0] // empty')
 
           if [ -n "$existing" ]; then
-            gh pr edit "$existing" --repo "${UPSTREAM_REPO}" --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" --body "$body"
-          else
-            gh pr create \
-              --repo "${UPSTREAM_REPO}" \
-              --base main \
-              --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
-              --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" \
-              --body "$body"
+            url=$(jq -r '.url' <<<"$existing")
+            echo "Existing PR updated by the branch push: ${url}"
+            exit 0
           fi
+
+          open_count=$(gh pr list --repo "${UPSTREAM_REPO}" --state open --limit 100 --json number --jq 'length')
+          if [ "$open_count" -ge 50 ]; then
+            echo "::error::The author already has ${open_count} open PRs; cannot create a new one."
+            exit 1
+          fi
+
+          gh pr create \
+            --repo "${UPSTREAM_REPO}" \
+            --base main \
+            --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
+            --title "locale(zhCN): automated Simplified Chinese update" \
+            --body "Automated zhCN update. Only Locales/zhCN.lua changes. Coverage, placeholders, English leftovers, and the generated locale were validated before push."
