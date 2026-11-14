@@ -55,7 +55,7 @@ const ALLOWED_ENGLISH = new Set([
   "Poppins", "Russo One", "DaylightUI", "DaylightUI Discord",
   // Style and addon names users see in the UI, plus the donation page.
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
-  "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul",
+  "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul", "SkillUp", "SkillUp Forever",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
 ]);

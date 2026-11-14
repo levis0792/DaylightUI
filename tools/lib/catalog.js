@@ -11,11 +11,12 @@ const { tokenize } = require("./lua");
 const FIELDS = new Set([
   "label", "desc", "pitch", "title", "short", "blurb", "hint", "help",
   "note", "text", "sub", "empty", "more", "confirm", "tooltip", "tips", "mouseover", "explanation",
+  "strataWhat", "showLabel", "showDesc", "slantDesc",
 ]);
 const WALKED = new Set(["values", "choices", "labels", "STRATA_LABELS"]);
 const ORDER_ONLY = new Set(["order"]);
 const HELPERS = new Set([
-  "strataRow", "mediaRow", "barRows", "fontRow", "backRow", "labelRow",
+  "strataRow", "mediaRow", "barRows", "fontRow", "backRow", "labelRow", "framePage",
   "toggleRow", "sliderRow", "dropdownRow", "buttonRow", "colorRow", "textRow",
 ]);
 
@@ -46,6 +47,10 @@ function isUiString(tokens, i, stack) {
   const prev2 = before[before.length - 2];
   if (prev2 === "L" && prev === "[") return "locale";
   if (prev === "=" && FIELDS.has(prev2)) return "display";
+  if (stack.some((s) => s === "SPOTS")) {
+    if (prev === "=" && /[a-z]/.test(String(tokens[i].value)) && i + 1 < tokens.length && !["=", "]"].includes(tokens[i + 1].value)) return "choice";
+    return null;
+  }
   if (stack.some((s) => s === "values" || s === "labels" || s === "STRATA_LABELS")) {
     if (prev === "=" && before[before.length - 3] !== "key" && i + 1 < tokens.length && !["=", "]"].includes(tokens[i + 1].value)) return "choice";
     return null;

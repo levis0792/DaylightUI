@@ -6525,3 +6525,37 @@ L["while your target is one you can attack"] = "目标为可攻击的敌人时"
 L["in Shadowform"] = "处于暗影形态时"
 L["Which page of buttons this bar shows %s. Your keybinds cast what the bar shows. No change keeps the bar's own buttons."] = "此动作条在%s显示哪一页按钮。快捷键会施放动作条当前显示的内容。“不更改”会保留动作条自身的按钮。"
 L[" A held key's page comes first, then this one, then your stance or form."] = " 按住按键对应的页面优先，其次是此页面，最后是姿态或形态。"
+
+L["Party Targets"] = "小队目标"
+
+L["Show party targets"] = "显示小队目标"
+
+L["Right of the member"] = "小队成员右侧"
+
+L["Left of the member"] = "小队成员左侧"
+
+L["Under the member"] = "小队成员下方"
+
+L["Over the member"] = "小队成员上方"
+
+L["A small frame beside each party member showing who they're targeting."] = "在每个小队成员旁显示一个小框体，显示其当前目标。"
+
+L["The layer the party targets draw in."] = "小队目标框体使用的层级。"
+
+L["Who each party member is targeting, in a small frame beside them. Click one to target it too."] = "在每个小队成员旁显示其当前目标的小框体。点击可将其设为目标。"
+
+L["SkillUp"] = "SkillUp"
+
+L["SkillUp Forever"] = "SkillUp Forever"
+
+L["Shows the game's profession window, where SkillUp Forever draws its skill-up chances, costs and route. Daylight UI's window comes back the next time you open a profession."] = "显示游戏自带的专业技能窗口，SkillUp Forever 在其中显示技能提升概率、花费和路线。关闭后 Daylight UI 的窗口会恢复。"
+
+L["Click: switch to the game's window"] = "点击：切换到游戏自带窗口"
+
+L["%s: an aura filter needs a key, a label and a list of spell ids."] = "%s：光环过滤器需要 key、标签和法术 ID 列表。"
+
+L["%s: the game doesn't let aura filter %s pick out any of its spells on group members."] = "%s：游戏不允许光环过滤器 %s 在小队成员身上筛选其任何法术。"
+
+L["Shape"] = "形状"
+
+L["Round rings, squares, or squares with an angled outer side like the frames' ends. The aggro fill, arrival light and elite frame follow the shape."] = "圆形、方形，或与框体末端相同的斜边方形。仇恨填充、到达提示和精英边框会随形状变化。"
