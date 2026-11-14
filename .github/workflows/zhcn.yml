@@ -67,25 +67,12 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/zhcn-tools"
           cp -a tools "${RUNNER_TEMP}/zhcn-tools/tools"
 
-      - name: Create or advance the PR branch
+      - name: Create the PR branch from the author's current main
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          if git fetch "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "${ZHCN_BRANCH}"; then
-            git switch -C "${ZHCN_BRANCH}" FETCH_HEAD
-            if ! git merge-base --is-ancestor upstream/main HEAD; then
-              git merge --no-edit upstream/main
-            fi
-          else
-            git switch -C "${ZHCN_BRANCH}" upstream/main
-          fi
+          git switch -C "${ZHCN_BRANCH}" upstream/main
           git checkout main -- Locales/zhCN.lua
           test -f Locales/zhCN.lua
-          git diff --quiet || {
-            echo "The maintenance tool changed the locale during branch setup."
-            exit 1
-          }
 
       - name: Scan current coverage
         id: scan
@@ -196,7 +183,7 @@ jobs:
             exit 0
           fi
           git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
+          git push --force-with-lease "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Verify the PR contains only the locale
