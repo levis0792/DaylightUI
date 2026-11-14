@@ -46,6 +46,7 @@ function readLocale() {
 const ALLOWED_ENGLISH = new Set([
   "PvP", "PvE", "RP", "DPS", "HPS", "NPC", "UI", "AFK", "AP", "AOE", "AoE",
   "GUID", "ID", "PVP", "PVE", "Daylight UI", "Daylight", "TW", "CN", "US", "EU",
+  "CDM",
   "Alt", "Ctrl", "Shift", "Esc",
   // AddOn and font names stay as published so players can find them.
   "Ace3", "Attune", "Baganator", "Bagnon", "BuffLedger", "Deadly Boss Mods",
