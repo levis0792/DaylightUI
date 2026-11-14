@@ -285,7 +285,9 @@ async function requestBatch(batch, memory, opts = {}) {
     } catch (e) {
       last = e;
       const canRetry = retryable(e);
-      console.error('AI batch attempt ' + attempt + '/' + tries + ' failed: ' + (e.message || e));
+      const message = 'AI batch attempt ' + attempt + '/' + tries + ' failed: ' + (e.message || e);
+      console.error(message);
+      console.log('::error::' + message)
       if (!canRetry || attempt === tries) break;
       const delay = Math.min(30000, integerEnv('AI_RETRY_BASE_MS', 1500, 0) * (2 ** (attempt - 1)));
       console.error('Retrying in ' + delay + 'ms');
