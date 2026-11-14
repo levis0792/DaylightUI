@@ -204,7 +204,7 @@ jobs:
             exit 0
           fi
           git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}"
-          git push --force-with-lease "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Verify the PR contains only the locale
