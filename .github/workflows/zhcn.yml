@@ -54,12 +54,32 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check whether the author's sources changed
+        id: changed
+        shell: bash
+        run: |
+          # Scheduled runs stay cheap: read the author's main and the commit the
+          # automation branch was last built from. When they match, stop here
+          # and skip Node, the AI call and the PR work.
+          upstream_sha=$(git ls-remote "https://github.com/${UPSTREAM_REPO}.git" refs/heads/main | awk '{print $1}')
+          test -n "$upstream_sha" || { echo "::error::Could not read the author's main."; exit 1; }
+          last=$(git log -1 --format='%(trailers:key=Upstream-SHA,valueonly)' "refs/remotes/origin/${ZHCN_BRANCH}" 2>/dev/null | tr -d '[:space:]')
+          if [ "${{ github.event_name }}" = "schedule" ] && [ -n "$last" ] && [ "$last" = "$upstream_sha" ]; then
+            echo "Upstream is still ${upstream_sha}; nothing to translate."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+
       - name: Set up Node
+        if: steps.changed.outputs.needed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - name: Fetch the author's current main
+        if: steps.changed.outputs.needed == 'true'
         id: upstream
         shell: bash
         run: |
@@ -74,6 +94,7 @@ jobs:
           echo "short=$short" >> "$GITHUB_OUTPUT"
 
       - name: Stage the maintenance tools outside the PR branch
+        if: steps.changed.outputs.needed == 'true'
         shell: bash
         run: |
           rm -rf "${RUNNER_TEMP}/zhcn-tools"
@@ -81,6 +102,7 @@ jobs:
           cp -a tools "${RUNNER_TEMP}/zhcn-tools/tools"
 
       - name: Create the PR branch from the author's current main
+        if: steps.changed.outputs.needed == 'true'
         shell: bash
         run: |
           # Keep the fork's copy as the merge source before switching branches.
@@ -93,6 +115,7 @@ jobs:
           echo "Base: the author's locale plus only the entries it is missing."
 
       - name: Scan current coverage
+        if: steps.changed.outputs.needed == 'true'
         id: scan
         shell: bash
         run: |
@@ -109,6 +132,7 @@ jobs:
           fi
 
       - name: Check the translation endpoint configuration
+        if: steps.changed.outputs.needed == 'true'
         env:
           CHECK_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
           CHECK_BASE: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
@@ -145,7 +169,7 @@ jobs:
           fi
 
       - name: Upload AI translation output
-        if: always()
+        if: always() && steps.changed.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-ai-log-${{ github.run_id }}
@@ -153,11 +177,13 @@ jobs:
           if-no-files-found: ignore
 
       - name: Validate the author-facing file strictly
+        if: steps.changed.outputs.needed == 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
         run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
       - name: Test the translator's glossary and retry handling
+        if: steps.changed.outputs.needed == 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
           ZHCN_TOOL_ROOT: ${{ runner.temp }}/zhcn-tools
@@ -187,6 +213,7 @@ jobs:
           '
 
       - name: Upload translation review report
+        if: steps.changed.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-ai-review-${{ steps.upstream.outputs.short }}
@@ -194,6 +221,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Commit the translation
+        if: steps.changed.outputs.needed == 'true'
         id: changes
         env:
           UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
@@ -206,10 +234,13 @@ jobs:
           git add Locales/zhCN.lua
           if git diff --cached --quiet; then
             echo "No source translation change for ${UPSTREAM_SHORT}"
+            # Still record the commit, so the next scheduled run can stop early.
+            git commit --allow-empty -m "locale(zhCN): no change for upstream ${UPSTREAM_SHORT}" -m "Upstream-SHA: ${{ steps.changed.outputs.sha }}"
+            git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}"
+          git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}" -m "Upstream-SHA: ${{ steps.changed.outputs.sha }}"
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
@@ -217,9 +248,9 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         shell: bash
         run: |
-          changed=$(git diff --name-only upstream/main...HEAD)
-          test "$changed" = "Locales/zhCN.lua" || {
-            echo "::error::The PR must change only Locales/zhCN.lua; got: $changed"
+          extra=$(git diff --name-only upstream/main...HEAD | grep -v '^Locales/zhCN.lua$' || true)
+          test -z "$extra" || {
+            echo "::error::The PR must change only Locales/zhCN.lua; got: $extra"
             exit 1
           }
 
