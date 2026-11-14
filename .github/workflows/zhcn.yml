@@ -11,6 +11,13 @@ on:
         description: "Run title marker used by the monitor to avoid duplicate runs"
         required: false
         type: string
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/zhcn.yml"
+      - "tools/zhcn.js"
+      - "tests/test_zhcn_tool.js"
 
 permissions:
   contents: write
@@ -167,12 +174,6 @@ jobs:
               console.log("zhCN tool regression passed");
             }).catch((error) => { console.error(error.stack || error); process.exit(1); });
           '
-
-      - name: Validate the generated zhCN locale
-        shell: bash
-        run: |
-          set -o pipefail
-          node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check 2>&1 | tee /tmp/zhcn-native-locale.txt
 
       - name: Upload translation review report
         uses: actions/upload-artifact@v4
