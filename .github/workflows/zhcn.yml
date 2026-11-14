@@ -15,6 +15,11 @@ on:
         description: "Run title marker used by the monitor to avoid duplicate runs"
         required: false
         type: string
+      force:
+        description: "Run even when upstream has not changed (true/false)"
+        required: false
+        default: "false"
+        type: string
   push:
     branches:
       - main
@@ -58,13 +63,15 @@ jobs:
         id: changed
         shell: bash
         run: |
-          # Scheduled runs stay cheap: read the author's main and the commit the
-          # automation branch was last built from. When they match, stop here
-          # and skip Node, the AI call and the PR work.
+          # Cheap check for every trigger: read the author's main and the commit
+          # the automation branch was last built from. When they match, stop
+          # here and skip Node, the AI call and the PR work. A manual run can
+          # still force a full pass with force=true.
           upstream_sha=$(git ls-remote "https://github.com/${UPSTREAM_REPO}.git" refs/heads/main | awk '{print $1}')
           test -n "$upstream_sha" || { echo "::error::Could not read the author's main."; exit 1; }
           last=$(git log -1 --format='%(trailers:key=Upstream-SHA,valueonly)' "refs/remotes/origin/${ZHCN_BRANCH}" 2>/dev/null | tr -d '[:space:]')
-          if [ "${{ github.event_name }}" = "schedule" ] && [ -n "$last" ] && [ "$last" = "$upstream_sha" ]; then
+          force="${{ inputs.force || 'false' }}"
+          if [ "$force" != "true" ] && [ -n "$last" ] && [ "$last" = "$upstream_sha" ]; then
             echo "Upstream is still ${upstream_sha}; nothing to translate."
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
