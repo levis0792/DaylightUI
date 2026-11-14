@@ -1,5 +1,5 @@
 "use strict";
-// Maintain the zhCN localization in a fork of DaylightUI.
+// Maintain the zhCN localization in a fork of DaylightUI. (runtime keys)
 //
 // Commands:
 //   node tools/zhcn.js check
