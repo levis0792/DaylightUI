@@ -292,9 +292,19 @@ async function requestBatch(batch, memory, opts = {}) {
       await wait(delay);
     }
   }
+  // A validation error (English left, placeholder mismatch, omitted key) is
+  // deterministic for a whole batch. Retry each string alone so one awkward
+  // line does not block every new string in the release.
+  if (last && !retryable(last) && batch.length > 1) {
+    console.error('Retrying the failed batch one string at a time.');
+    const out = {};
+    for (const row of batch) Object.assign(out, await requestBatch([row], memory, { ...opts, retries: tries, wait }));
+    return out;
+  }
   if (last && !retryable(last)) throw last;
   throw new Error('AI batch failed after ' + tries + ' attempts: ' + (last && (last.message || last)));
 }
+
 async function translate() {
   const { cat, entries, english } = report({ missingOnly: true });
   const missing = [...new Set([
