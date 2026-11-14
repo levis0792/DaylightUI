@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const root = path.resolve(__dirname, "..");
+const root = process.env.ZHCN_TEST_ROOT ? path.resolve(process.env.ZHCN_TEST_ROOT) : path.resolve(__dirname, "..");
 const toolRoot = process.env.ZHCN_TOOL_ROOT ? path.resolve(process.env.ZHCN_TOOL_ROOT) : root;
 const stagedToolRoot = process.env.ZHCN_TOOL_ROOT ? path.join(toolRoot, "tools") : null;
 const toolPath = path.join(stagedToolRoot || toolRoot, "zhcn.js");
