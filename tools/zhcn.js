@@ -54,33 +54,56 @@ const ALLOWED_ENGLISH = new Set([
   "Barlow Condensed", "Expressway", "Fira Sans", "Lato", "PT Sans Narrow",
   "Poppins", "Russo One", "DaylightUI", "DaylightUI Discord",
   // Keyboard labels are shown in uppercase by the game.
-  "ALT", "CTRL", "SHIFT",
+  "ALT", "CTRL", "SHIFT", "shop",
 ]);
 
 function hasHan(s) {
   return /[\u3400-\u9fff]/.test(String(s));
 }
 
-function englishLeftover(key, value) {
-  if (!value || !/[A-Za-z]/.test(value)) return false;
-  if (hasHan(value)) return false;
-  const stripped = String(value)
+// Words that are actual UI actions. Brand names, addon names, key names and
+// command arguments do not belong in this list, so a mixed translation such as
+// "Open 商店" is still caught while "DaylightUI" and "/dui install" are not.
+const UI_ACTION_WORDS = new Set([
+  "open", "close", "save", "cancel", "apply", "reset", "enable", "enabled",
+  "disable", "disabled", "show", "hide", "load", "delete", "remove", "edit",
+  "copy", "paste", "search", "select", "clear", "next", "previous", "back",
+  "yes", "no", "on", "off", "default", "advanced", "general", "profile",
+  "profiles", "import", "export", "update", "install", "ready", "warning",
+  "error", "settings", "setting",
+]);
+
+function stripCommandsAndCode(value) {
+  return String(value)
     .replace(/\|c[0-9a-fA-F]{8}|\|r|\|T[^|]*\|t/g, "")
     .replace(/%(?:%|[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g, "")
     .replace(/https?:\/\/\S+/g, "")
+    .replace(/`[^`]*`/g, "")
+    // Remove a command and its ASCII arguments; the rest of the sentence is
+    // still checked, so text after a command is not silently skipped.
+    .replace(/\/[A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z0-9_%<>=|.-]+)*/g, "")
     .replace(/[/_.[\]{}()<>:=+*\-]+/g, " ")
     .trim();
+}
+
+function englishLeftover(key, value) {
+  if (!value || !/[A-Za-z]/.test(value)) return false;
+  const stripped = stripCommandsAndCode(value);
   if (!stripped) return false;
   const words = stripped.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
   if (!words.length) return false;
   if (ALLOWED_ENGLISH.has(String(value).trim())) return false;
   if (String(key).startsWith("Daylight UI: ") && String(value).startsWith("Daylight UI")) return false;
   if (words.every((w) => ALLOWED_ENGLISH.has(w))) return false;
-  // Proper names and slash commands intentionally stay as written.
+  // Proper names, slash commands and addon commands intentionally stay as written.
   if (String(key).startsWith("/") || String(value).startsWith("/")) return false;
   if (/^Daylight UI\s*:/i.test(String(value))) return false;
   if (/^[\w.-]+\.(?:png|tga|blp|ttf|otf)$/i.test(String(value))) return false;
-  if (/^(?:shop|tab|filter|none|auto)$/i.test(String(value))) return false;
+  if (/^skins profile\b/i.test(String(value))) return false;
+  // A value with Chinese must not still contain an English UI action word.
+  if (hasHan(value)) {
+    return words.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()));
+  }
   return words.some((w) => w.length >= 2);
 }
 

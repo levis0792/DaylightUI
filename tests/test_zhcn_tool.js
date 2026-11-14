@@ -41,6 +41,7 @@ async function main() {
   assert.equal(spawnSync(process.execPath, ["--check", toolPath], { encoding: "utf8" }).status, 0,
     "tools/zhcn.js must parse");
   const { requestOnce, requestBatch, readGlossary, retryable } = require(toolPath);
+  const { englishLeftover } = require(toolPath);
 
   const glossary = readGlossary();
   assert.equal(glossary["Focus Target"], "焦点目标");
@@ -49,6 +50,12 @@ async function main() {
   assert.equal(retryable({ status: 429 }), true);
   assert.equal(retryable({ status: 503 }), true);
   assert.equal(retryable({ status: 400 }), false);
+
+  assert.equal(englishLeftover("Open", "Open 商店"), true, "mixed English UI action words must be caught");
+  assert.equal(englishLeftover("Open", "打开商店"), false);
+  assert.equal(englishLeftover("test off", "/dui buffs test off 停止"), false, "command arguments are not UI text");
+  assert.equal(englishLeftover("skins profile off", "skins profile 已关闭"), false, "addon command is not UI text");
+  assert.equal(englishLeftover("Daylight UI: Bags", "Daylight UI: 背包"), false, "brand prefix stays English");
   assert.equal(retryable({ status: 401 }), false);
 
   const oldKey = process.env.API_KEY;
