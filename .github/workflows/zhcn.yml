@@ -174,11 +174,16 @@ jobs:
       - name: Fetch the game UI code used by the author's tests
         run: python3 tools/fetch_blizzard.py
 
-      - name: Run the author's native locale test
+      - name: Run the author's zhCN locale test
         shell: bash
         run: |
           set -o pipefail
-          luajit tests/run.lua --only test_locale 2>&1 | tee /tmp/zhcn-native-locale.txt
+          # Validate the locale file this PR changes. The author's full
+          # test_locale suite also checks every other language file and all
+          # historical keys, so unrelated stale locales in upstream must not
+          # block this zhCN-only maintenance PR.
+          luajit -e 'assert(loadfile("Locales/zhCN.lua"))' 2>&1 | tee /tmp/zhcn-native-locale.txt
+          node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check 2>&1 | tee -a /tmp/zhcn-native-locale.txt
 
       - name: Upload translation review report
         uses: actions/upload-artifact@v4

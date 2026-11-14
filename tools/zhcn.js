@@ -223,9 +223,11 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch) {
     'Do not translate slash commands, setting keys, font names, URLs or code identifiers.',
     'If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.',
     'Use the supplied reviewed pairs as translation memory for terminology.',
+    'Each requested row has original_english and source_location. Translate original_english; source_location is only a file reference and must never be returned as a translation.',
     'Required glossary: ' + JSON.stringify(glossary),
   ].join(' ');
-  const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: batch }, null, 2);
+  const requested = batch.map(([original_english, source_location]) => ({ original_english, source_location }));
+  const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: requested }, null, 2);
   const res = await fetchImpl(base + '/chat/completions', {
     signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
     method: 'POST',
@@ -251,12 +253,29 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch) {
     if (first >= 0 && last > first) content = content.slice(first, last + 1);
     parsed = JSON.parse(content);
   } catch (e) {
-    throw new Error('AI returned invalid JSON: ' + text.slice(0, 1000));
+    // Some models answer a one-string request with the translated string
+    // itself instead of a JSON object. Accept that only for a single row;
+    // multi-row requests still require the complete key mapping.
+    if (batch.length === 1) {
+      try {
+        const data = JSON.parse(text);
+        const content = data.choices[0].message.content.trim();
+        parsed = { [batch[0][0]]: content };
+      } catch (_) {
+        throw new Error('AI returned invalid JSON: ' + text.slice(0, 1000));
+      }
+    } else {
+      throw new Error('AI returned invalid JSON: ' + text.slice(0, 1000));
+    }
   }
   const out = {};
   for (const [k] of batch) {
-    const v = parsed[k];
-    if (typeof v !== 'string' || !v.trim()) throw new Error('AI omitted: ' + JSON.stringify(k));
+    let v = parsed[k];
+    if ((typeof v !== 'string' || !v.trim()) && batch.length === 1) {
+      const values = Object.values(parsed).filter((item) => typeof item === 'string' && item.trim());
+      if (values.length === 1) v = values[0];
+    }
+    if (typeof v !== 'string' || !v.trim()) throw new Error('AI omitted: ' + JSON.stringify(k) + '; returned keys: ' + JSON.stringify(Object.keys(parsed)));
     if (!formatOk(k, v)) throw new Error('Placeholder mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v));
     if (englishLeftover(k, v)) throw new Error('AI left the string in English: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v));
     out[k] = v;
@@ -324,16 +343,26 @@ async function translate() {
   console.log(`Translation memory reused: ${missing.length - remaining.length}`);
   console.log(`AI translation needed: ${remaining.length}`);
   const size = Math.max(1, Number(process.env.ZHCN_BATCH_SIZE || 20));
+  const failed = [];
   for (let i = 0; i < remaining.length; i += size) {
     const batch = remaining.slice(i, i + size).map((k) => [k, cat.get(k).refs.slice(0, 3).join(", ")]);
     console.log(`AI batch ${i / size + 1}/${Math.ceil(remaining.length / size)} (${batch.length} strings)`);
-    Object.assign(result, await requestBatch(batch, memory));
+    try {
+      Object.assign(result, await requestBatch(batch, memory));
+    } catch (e) {
+      console.error(`AI batch ${i / size + 1} still failed: ${e.message || e}`);
+      for (const [key] of batch) failed.push({ key, error: String(e.message || e) });
+    }
   }
   const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-  fs.writeFileSync(reportPath, JSON.stringify(result, null, 2) + "\n", "utf8");
+  fs.writeFileSync(reportPath, JSON.stringify({ translations: result, failed }, null, 2) + "\n", "utf8");
   applyData(result, "AI translation", { replace: true });
-  report();
+  const after = report();
+  if (failed.length || after.missing.length || after.english.length) {
+    console.error(`Translation incomplete: ${failed.length} AI failures, ${after.missing.length} missing, ${after.english.length} English leftovers.`);
+    process.exit(1);
+  }
 }
 
 if (require.main === module) {
