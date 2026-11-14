@@ -418,10 +418,18 @@ async function translate() {
   const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, JSON.stringify({ translations: result, failed }, null, 2) + "\n", "utf8");
+  if (failed.length) {
+    console.error(`Translation incomplete: ${failed.length} AI failures.`);
+    process.exit(1);
+  }
+
+  // Write the locale only after every batch succeeded, and run the strict
+  // check once more right before writing. A failed run leaves the file
+  // untouched, so a retry always starts from a clean base.
   applyData(result, "AI translation", { replace: true });
   const after = report();
-  if (failed.length || after.missing.length || after.english.length) {
-    console.error(`Translation incomplete: ${failed.length} AI failures, ${after.missing.length} missing, ${after.english.length} English leftovers.`);
+  if (after.missing.length || after.english.length) {
+    console.error(`Translation incomplete: ${after.missing.length} missing, ${after.english.length} English leftovers.`);
     process.exit(1);
   }
 }
