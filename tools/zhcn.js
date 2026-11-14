@@ -55,6 +55,7 @@ const ALLOWED_ENGLISH = new Set([
   "Poppins", "Russo One", "DaylightUI", "DaylightUI Discord",
   // Style and addon names users see in the UI, plus the donation page.
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
+  "Alfa Slab One", "Anton", "Archivo Black", "Audiowide", "Baloo 2", "Bangers", "Bebas Neue", "Big Shoulders", "Black Ops One", "Bowlby One", "Bungee", "Chakra Petch", "Changa One", "Chewy", "Cinzel", "Coiny", "Comfortaa", "Delius", "Dosis", "Fabled Class", "Fabled Core", "Fabled Dimension", "Fabled Myth", "Fabled Pixels", "Fabled Pixels v2", "Fabled Realm", "Fabled Realm v2", "Fabled Regalia", "Fizzle", "Fredoka", "Gluten", "Grandstander", "Itim", "Kanit Black Italic", "Lilita One", "Luckiest Guy", "M PLUS Rounded", "Mali", "MedievalSharp", "Metamorphous", "Nunito Black", "Orbitron", "Oswald", "Passion One", "Permanent Marker", "Pirata One", "Press Start 2P", "Quicksand", "Righteous", "Rubik", "Rubik Glitch", "Rubik Mono", "Sniglet", "Squada One", "Staatliches", "Teko", "Titan One", "Varela Round",
   "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul", "SkillUp", "SkillUp Forever",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
