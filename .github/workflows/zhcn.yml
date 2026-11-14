@@ -1,6 +1,7 @@
 name: Update zhCN translation
 
 on:
+  # Bump this comment when the cron needs re-registering with GitHub.
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
@@ -81,9 +82,16 @@ jobs:
       - name: Create the PR branch from the author's current main
         shell: bash
         run: |
+          # Keep the fork's copy as the merge source before switching branches.
+          git show main:Locales/zhCN.lua > "${RUNNER_TEMP}/zhcn-fork.lua"
+          git show main:tools/zhcn-overrides.json > "${RUNNER_TEMP}/zhcn-overrides.json"
           git switch -C "${ZHCN_BRANCH}" upstream/main
-          git checkout main -- Locales/zhCN.lua
           test -f Locales/zhCN.lua
+          # Start from the author's own locale, so anything already merged stays
+          # as the author wrote it and nothing gets retranslated.
+          ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" merge "${RUNNER_TEMP}/zhcn-fork.lua"
+          ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" override "${RUNNER_TEMP}/zhcn-overrides.json"
+          echo "Base: the author's locale plus the reviewed overrides."
 
       - name: Scan current coverage
         id: scan

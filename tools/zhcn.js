@@ -2,7 +2,6 @@
 // Maintain the zhCN localization in a fork of DaylightUI.
 //
 // Commands:
-// Trigger test marker.
 //   node tools/zhcn.js check
 //   node tools/zhcn.js missing
 //   node tools/zhcn.js translate
@@ -57,6 +56,8 @@ const ALLOWED_ENGLISH = new Set([
   // Style and addon names users see in the UI, plus the donation page.
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
   "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul",
+  // Rank is a fixed game term; keep it as the client prints it.
+  "Rank",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
 ]);
@@ -200,6 +201,33 @@ function applyData(data, label, opts = {}) {
   return toApply.length;
 }
 
+function parseLocaleFile(file) {
+  const src = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  const entries = new Map();
+  for (const line of src.split("\n")) {
+    const m = line.match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
+    if (!m) continue;
+    try { entries.set(JSON.parse(m[1]), JSON.parse(m[2])); } catch (e) {}
+  }
+  return entries;
+}
+
+// Add only the entries the current locale does not have yet. Upstream keeps
+// whatever it already translated, so a merged upstream never gets rewritten.
+function merge(file) {
+  const source = path.resolve(root, file || "");
+  const entries = parseLocaleFile(source);
+  if (!entries.size) throw new Error("no locale entries in " + source);
+  applyData(Object.fromEntries(entries), "merged " + path.basename(source));
+  report();
+}
+
+// Force reviewed values (for example fixed game terms) over upstream/AI ones.
+function override(file) {
+  const data = JSON.parse(fs.readFileSync(path.resolve(root, file || ""), "utf8"));
+  applyData(data, "overrides " + path.basename(file), { replace: true });
+  report();
+}
 function apply(file) {
   const data = JSON.parse(fs.readFileSync(path.resolve(root, file || ""), "utf8"));
   applyData(data, path.basename(file));
@@ -408,9 +436,11 @@ if (require.main === module) {
     if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length) process.exit(1);
   }
   else if (cmd === "apply") apply(process.argv[3]);
+  else if (cmd === "merge") merge(process.argv[3]);
+  else if (cmd === "override") override(process.argv[3]);
   else if (cmd === "translate") translate().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else {
-    console.error("Usage: node tools/zhcn.js check|missing|translate|apply <json>");
+    console.error("Usage: node tools/zhcn.js check|missing|translate|apply|merge|override <json>");
     process.exit(2);
   }
 }
