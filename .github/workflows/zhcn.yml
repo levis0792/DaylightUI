@@ -28,7 +28,7 @@ jobs:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
       ZHCN_BRANCH: automation/zhcn
-      API_KEY: ${{ secrets.API_KEY }}
+      API_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-v4.1-flash' }}
       AI_RETRIES: ${{ vars.AI_RETRIES || '3' }}
