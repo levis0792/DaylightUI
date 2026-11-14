@@ -178,11 +178,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          # Validate the locale file this PR changes. The author's full
-          # test_locale suite also checks every other language file and all
-          # historical keys, so unrelated stale locales in upstream must not
-          # block this zhCN-only maintenance PR.
-          luajit -e 'assert(loadfile("Locales/zhCN.lua"))' 2>&1 | tee /tmp/zhcn-native-locale.txt
+          cat > /tmp/check-zhcn.lua <<'LUA'
+          local chunk, err = loadfile("Locales/zhCN.lua")
+          assert(chunk, err)
+          local ns = { L = setmetatable({}, { __index = function(_, k) return k end }) }
+          chunk("DaylightUI", ns)
+          LUA
+          luajit /tmp/check-zhcn.lua 2>&1 | tee /tmp/zhcn-native-locale.txt
           node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check 2>&1 | tee -a /tmp/zhcn-native-locale.txt
 
       - name: Upload translation review report
