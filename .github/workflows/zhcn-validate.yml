@@ -18,5 +18,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install LuaJIT
+        run: sudo apt-get update -q && sudo apt-get install -y -q luajit
+      - name: Fetch the game's UI code for the runtime walker
+        run: python3 tools/fetch_blizzard.py
+      - name: Export the author's runtime UI key set
+        run: luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
+      - name: Fail closed if the runtime key file is missing
+        shell: bash
+        run: |
+          test -s "${RUNNER_TEMP}/zhcn-keys.txt" || {
+            echo "::error::The author's runtime key set was not extracted.";
+            exit 1
+          }
+
       - name: Validate complete locale coverage
-        run: node tools/zhcn.js check
+        shell: bash
+        run: ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node tools/zhcn.js check

@@ -90,6 +90,10 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install LuaJIT
+        if: steps.changed.outputs.needed == 'true'
+        run: sudo apt-get update -q && sudo apt-get install -y -q luajit
+
       - name: Fetch the author's current main
         if: steps.changed.outputs.needed == 'true'
         id: upstream
@@ -104,6 +108,14 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "short=$short" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the game's UI code for the author's runtime walker
+        if: steps.changed.outputs.needed == 'true'
+        run: python3 tools/fetch_blizzard.py
+
+      - name: Export the author's runtime UI key set
+        if: steps.changed.outputs.needed == 'true'
+        run: luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
 
       - name: Stage the maintenance tools outside the PR branch
         if: steps.changed.outputs.needed == 'true'
@@ -123,7 +135,7 @@ jobs:
           test -f Locales/zhCN.lua
           # Start from the author's own locale, so anything already merged stays
           # as the author wrote it and nothing gets retranslated.
-          ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" merge "${RUNNER_TEMP}/zhcn-fork.lua"
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" merge "${RUNNER_TEMP}/zhcn-fork.lua"
           echo "Base: the author's locale plus only the entries it is missing."
 
       - name: Scan current coverage
@@ -132,7 +144,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check | tee /tmp/zhcn-check.txt
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check | tee /tmp/zhcn-check.txt
           code=${PIPESTATUS[0]}
           if grep -q "Untranslated: 0" /tmp/zhcn-check.txt; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
@@ -172,7 +184,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate 2>&1 | tee /tmp/zhcn-ai.log
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate 2>&1 | tee /tmp/zhcn-ai.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
             detail=$(tail -n 3 /tmp/zhcn-ai.log | tr "\n" " " | cut -c1-1000)
@@ -193,7 +205,7 @@ jobs:
         if: steps.changed.outputs.needed == 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
-        run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
+        run: ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
       - name: Test the translator's glossary and retry handling
         if: steps.changed.outputs.needed == 'true'
@@ -203,7 +215,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          API_KEY=test-key node -e '
+          API_KEY=test-key ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node -e '
             const assert = require("node:assert/strict");
             const path = require("node:path");
             const tool = require(path.join(process.env.ZHCN_TOOL_ROOT, "tools", "zhcn.js"));
