@@ -90,6 +90,27 @@ jobs:
             exit "$code"
           fi
 
+      - name: Check the translation endpoint configuration
+        env:
+          CHECK_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
+          CHECK_BASE: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
+        shell: bash
+        run: |
+          if [ -z "$CHECK_KEY" ]; then
+            echo "::error::No API key is available as API_KEY or OPENAI_API_KEY."
+            exit 1
+          fi
+          echo "Translation endpoint: ${CHECK_BASE}"
+          echo "API key is configured (length ${#CHECK_KEY})."
+          curl --silent --show-error --fail-with-body --max-time 20 \
+            -H "Authorization: Bearer ${CHECK_KEY}" \
+            "${CHECK_BASE%/}/models" > /tmp/zhcn-models.json || {
+              code=$?
+              echo "::error::Translation endpoint check failed with exit code ${code}."
+              exit "$code"
+            }
+          echo "Translation endpoint responded successfully."
+
       - name: Translate missing or untranslated strings
         if: steps.scan.outputs.needed == 'true'
         env:
