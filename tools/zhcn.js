@@ -56,8 +56,6 @@ const ALLOWED_ENGLISH = new Set([
   // Style and addon names users see in the UI, plus the donation page.
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
   "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul",
-  // Rank is a fixed game term; keep it as the client prints it.
-  "Rank",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
 ]);
