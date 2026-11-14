@@ -8,7 +8,8 @@ const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const toolRoot = process.env.ZHCN_TOOL_ROOT ? path.resolve(process.env.ZHCN_TOOL_ROOT) : root;
-const toolPath = path.join(toolRoot, "tools", "zhcn.js");
+const stagedToolRoot = process.env.ZHCN_TOOL_ROOT ? path.join(toolRoot, "tools") : null;
+const toolPath = path.join(stagedToolRoot || toolRoot, "zhcn.js");
 
 function fakeResponse(status, body) {
   return {
@@ -142,7 +143,8 @@ async function main() {
     if (oldModel === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModel;
   }
 
-  const workflow = fs.readFileSync(path.join(root, ".github", "workflows", "zhcn.yml"), "utf8");
+  const workflowPath = process.env.ZHCN_WORKFLOW || path.join(root, ".github", "workflows", "zhcn.yml");
+  const workflow = fs.readFileSync(workflowPath, "utf8");
   assert.match(workflow, /tests\/test_zhcn_tool\.js/);
   assert.match(workflow, /luajit tests\/run\.lua --only test_locale/);
   assert.ok(workflow.indexOf("Run the author's native locale test") < workflow.indexOf("Commit the translation"),
