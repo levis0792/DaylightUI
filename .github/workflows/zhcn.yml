@@ -71,7 +71,10 @@ jobs:
           # The last processed SHA lives on its own branch, so polling never
           # touches the pull request branch and never invalidates the author's
           # approval of the pull request checks.
-          last=$(git show "refs/remotes/origin/${ZHCN_STATE_BRANCH}:.upstream-sha" 2>/dev/null | tr -d '[:space:]')
+          last=""
+          if git show "refs/remotes/origin/${ZHCN_STATE_BRANCH}:.upstream-sha" > /tmp/zhcn-state 2>/dev/null; then
+            last=$(tr -d '[:space:]' < /tmp/zhcn-state)
+          fi
           force="${{ inputs.force || 'false' }}"
           if [ "$force" != "true" ] && [ -n "$last" ] && [ "$last" = "$upstream_sha" ]; then
             echo "Upstream is still ${upstream_sha}; nothing to translate."
