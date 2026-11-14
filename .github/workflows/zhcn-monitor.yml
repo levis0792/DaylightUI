@@ -25,31 +25,43 @@ jobs:
           test -n "$sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Restore the last processed SHA
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: upstream-sha.txt
-          key: daylightui-upstream-sha-${{ steps.upstream.outputs.sha }}
-
-      - name: Trigger the translation workflow only on a new upstream commit
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Scan recent trigger titles for this upstream commit
+        id: seen
         env:
           GH_TOKEN: ${{ github.token }}
           UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
         shell: bash
         run: |
-          gh workflow run zhcn.yml --repo "$GITHUB_REPOSITORY" --ref main -f upstream_sha="$UPSTREAM_SHA"
+          found=""
+          for page in 1 2 3 4 5; do
+            json=$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/runs" \
+              -f per_page=100 -f page="$page")
+            hit=$(jq -r --arg sha "$UPSTREAM_SHA" --arg workflow "zhcn.yml" '
+              .workflow_runs[]
+              | select(.name == "Update zhCN translation")
+              | select(.event == "workflow_dispatch")
+              | select(.head_branch == "main")
+              | select(.display_title | contains($sha))
+              | .id' <<<"$json" | head -n 1)
+            if [ -n "$hit" ]; then found="$hit"; break; fi
+            count=$(jq '.workflow_runs | length' <<<"$json")
+            [ "$count" -lt 100 ] && break
+          done
+          echo "run_id=$found" >> "$GITHUB_OUTPUT"
+          if [ -n "$found" ]; then
+            echo "Already triggered for ${UPSTREAM_SHA} (run ${found}); nothing to do."
+          else
+            echo "No run exists for ${UPSTREAM_SHA}; a new one is needed."
+          fi
 
-      - name: Remember this SHA after triggering
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Trigger the translation workflow only once per upstream commit
+        if: steps.seen.outputs.run_id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ steps.upstream.outputs.sha }}
         shell: bash
         run: |
-          printf '%s\n' "${{ steps.upstream.outputs.sha }}" > upstream-sha.txt
-
-      - name: Save the processed SHA
-        if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: upstream-sha.txt
-          key: daylightui-upstream-sha-${{ steps.upstream.outputs.sha }}
+          gh workflow run zhcn.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f upstream_sha="$UPSTREAM_SHA"

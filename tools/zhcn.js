@@ -18,9 +18,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.resolve(process.env.ZHCN_ROOT || path.join(__dirname, ".."));
+const defaultRoot = path.resolve(__dirname, "..");
+const root = path.resolve(process.env.ZHCN_ROOT || defaultRoot);
 const localePath = path.join(root, "Locales", "zhCN.lua");
-const toolRoot = path.resolve(__dirname, "..");
+const toolRoot = process.env.ZHCN_TOOL_ROOT
+  ? path.resolve(process.env.ZHCN_TOOL_ROOT)
+  : defaultRoot;
 const { extract } = require(path.join(toolRoot, "tools", "lib", "catalog"));
 const { luaQuote } = require(path.join(toolRoot, "tools", "lib", "lua"));
 const { formatOk, specifiers } = require(path.join(toolRoot, "tools", "lib", "format"));
@@ -159,64 +162,122 @@ function translationMemory(entries) {
   return { exact, approx };
 }
 
-async function requestBatch(batch, memory) {
+function readGlossary() {
+  const glossaryPath = path.join(toolRoot, 'tools', 'zhcn-glossary.json');
+  if (!fs.existsSync(glossaryPath)) throw new Error('zhCN glossary is missing: ' + glossaryPath);
+  let glossary;
+  try {
+    glossary = JSON.parse(fs.readFileSync(glossaryPath, 'utf8'));
+  } catch (e) {
+    throw new Error('zhCN glossary is invalid JSON: ' + glossaryPath + ': ' + e.message);
+  }
+  if (!glossary || typeof glossary !== 'object' || Array.isArray(glossary) || !Object.keys(glossary).length) {
+    throw new Error('zhCN glossary must be a non-empty JSON object: ' + glossaryPath);
+  }
+  return glossary;
+}
+
+function retryable(error) {
+  return error && (error.retryable === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
+}
+
+async function requestOnce(batch, memory, fetchImpl = globalThis.fetch) {
   const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
-  if (!key) throw new Error("API_KEY is not set");
-  const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
-  const model = process.env.OPENAI_MODEL || "deepseek-v4.1-flash";
+  if (!key) throw new Error('Repository secret API_KEY is not set');
+  const base = (process.env.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1').replace(/\/$/, '');
+  const model = process.env.OPENAI_MODEL || 'deepseek-v4.1-flash';
   const context = [];
   for (const [k, v] of [...memory.exact].slice(-250)) context.push([k, v]);
-  const glossary = fs.existsSync(path.join(toolRoot, "tools", "zhcn-glossary.json"))
-    ? JSON.parse(fs.readFileSync(path.join(root, "tools", "zhcn-glossary.json"), "utf8"))
-    : {};
+  const glossary = readGlossary();
   const system = [
-    "You translate World of Warcraft addon UI text from English to Simplified Chinese.",
-    "Return only a JSON object mapping every input key to a Chinese string; no markdown.",
-    "Preserve every printf placeholder exactly: %s, %d, %.0f, %.2f, %%.",
-    "Preserve color and texture codes exactly: |cAARRGGBB, |r, |T...|t.",
-    "Use concise, natural mainland Chinese UI language.",
-    "Use these approved terms: 爆击, 微缩地图, 鼠标提示, 潜行者.",
-    "Keep PvP, PvE, RP, DPS, HPS, NPC, UI and addon names in English.",
-    "Do not translate slash commands, setting keys, font names, URLs or code identifiers.",
-    "If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.",
-    "Use the supplied reviewed pairs as translation memory for terminology.",
-    "Required glossary: " + JSON.stringify(glossary),
-  ].join(" ");
+    'You translate World of Warcraft addon UI text from English to Simplified Chinese.',
+    'Return only a JSON object mapping every input key to a Chinese string; no markdown.',
+    'Preserve every printf placeholder exactly: %s, %d, %.0f, %.2f, %%.',
+    'Preserve color and texture codes exactly: |cAARRGGBB, |r, |T...|t.',
+    'Use concise, natural mainland Chinese UI language.',
+    'Use these approved terms: 爆击, 微缩地图, 鼠标提示, 潜行者.',
+    'Keep PvP, PvE, RP, DPS, HPS, NPC, UI and addon names in English.',
+    'Do not translate slash commands, setting keys, font names, URLs or code identifiers.',
+    'If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.',
+    'Use the supplied reviewed pairs as translation memory for terminology.',
+    'Required glossary: ' + JSON.stringify(glossary),
+  ].join(' ');
   const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: batch }, null, 2);
-  const res = await fetch(base + "/chat/completions", {
+  const res = await fetchImpl(base + '/chat/completions', {
     signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
     body: JSON.stringify({
       model,
-      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     }),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`AI request failed (${res.status}): ${text.slice(0, 1000)}`);
+  if (!res.ok) {
+    const error = new Error('AI request failed (' + res.status + '): ' + text.slice(0, 1000));
+    error.status = res.status;
+    throw error;
+  }
   let parsed;
   try {
     const data = JSON.parse(text);
     let content = data.choices[0].message.content.trim();
-    content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    content = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    const first = content.indexOf('{');
+    const last = content.lastIndexOf('}');
+    if (first >= 0 && last > first) content = content.slice(first, last + 1);
     parsed = JSON.parse(content);
   } catch (e) {
-    throw new Error("AI returned invalid JSON: " + text.slice(0, 1000));
+    throw new Error('AI returned invalid JSON: ' + text.slice(0, 1000));
   }
   const out = {};
   for (const [k] of batch) {
     const v = parsed[k];
-    if (typeof v !== "string" || !v.trim()) throw new Error(`AI omitted: ${JSON.stringify(k)}`);
-    if (!formatOk(k, v)) throw new Error(`Placeholder mismatch: ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
-    if (v === k) throw new Error(`AI left the string in English: ${JSON.stringify(k)}`);
+    if (typeof v !== 'string' || !v.trim()) throw new Error('AI omitted: ' + JSON.stringify(k));
+    if (!formatOk(k, v)) throw new Error('Placeholder mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v));
+    if (englishLeftover(k, v)) throw new Error('AI left the string in English: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v));
     out[k] = v;
   }
   return out;
 }
 
+function integerEnv(name, fallback, minimum) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < minimum) {
+    throw new Error(name + ' must be an integer >= ' + minimum);
+  }
+  return value;
+}
+
+async function requestBatch(batch, memory, opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
+  const tries = opts.retries || integerEnv('AI_RETRIES', 3, 1);
+  const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  let last;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try {
+      return await requestOnce(batch, memory, fetchImpl);
+    } catch (e) {
+      last = e;
+      const canRetry = retryable(e);
+      console.error('AI batch attempt ' + attempt + '/' + tries + ' failed: ' + (e.message || e));
+      if (!canRetry || attempt === tries) break;
+      const delay = Math.min(30000, integerEnv('AI_RETRY_BASE_MS', 1500, 0) * (2 ** (attempt - 1)));
+      console.error('Retrying in ' + delay + 'ms');
+      await wait(delay);
+    }
+  }
+  if (last && !retryable(last)) throw last;
+  throw new Error('AI batch failed after ' + tries + ' attempts: ' + (last && (last.message || last)));
+}
 async function translate() {
-  const { cat, entries } = report({ missingOnly: true });
-  const missing = [...cat.keys()].filter((k) => !entries.has(k));
+  const { cat, entries, english } = report({ missingOnly: true });
+  const missing = [...new Set([
+    ...[...cat.keys()].filter((k) => !entries.has(k)),
+    ...english,
+  ])];
   if (!missing.length) return;
   const memory = translationMemory(entries);
   const result = {};
@@ -240,15 +301,19 @@ async function translate() {
   report();
 }
 
-const cmd = process.argv[2] || "check";
-if (cmd === "missing") report({ missingOnly: true });
-else if (cmd === "check") {
-  const result = report();
-  if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length) process.exit(1);
+if (require.main === module) {
+  const cmd = process.argv[2] || "check";
+  if (cmd === "missing") report({ missingOnly: true });
+  else if (cmd === "check") {
+    const result = report();
+    if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length) process.exit(1);
+  }
+  else if (cmd === "apply") apply(process.argv[3]);
+  else if (cmd === "translate") translate().catch((e) => { console.error(e.stack || e); process.exit(1); });
+  else {
+    console.error("Usage: node tools/zhcn.js check|missing|translate|apply <json>");
+    process.exit(2);
+  }
 }
-else if (cmd === "apply") apply(process.argv[3]);
-else if (cmd === "translate") translate().catch((e) => { console.error(e.stack || e); process.exit(1); });
-else {
-  console.error("Usage: node tools/zhcn.js check|missing|translate|apply <json>");
-  process.exit(2);
-}
+
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover };

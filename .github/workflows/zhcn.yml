@@ -7,6 +7,10 @@ on:
         description: "Upstream main SHA to translate"
         required: false
         type: string
+      trigger_note:
+        description: "Run title marker used by the monitor to avoid duplicate runs"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -14,6 +18,8 @@ permissions:
 concurrency:
   group: zhcn-translation
   cancel-in-progress: false
+
+run-name: "zhCN ${{ inputs.trigger_note || inputs.upstream_sha || github.run_id }}"
 
 jobs:
   update:
@@ -23,14 +29,17 @@ jobs:
       TARGET_REPO: ${{ github.repository }}
       ZHCN_BRANCH: automation/zhcn
       API_KEY: ${{ secrets.API_KEY }}
-      OPENAI_BASE_URL: https://ai.levis0792.cn:18787/v1
-      OPENAI_MODEL: deepseek-v4.1-flash
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-v4.1-flash' }}
+      AI_RETRIES: ${{ vars.AI_RETRIES || '3' }}
+      AI_RETRY_BASE_MS: ${{ vars.AI_RETRY_BASE_MS || '1500' }}
     steps:
       - name: Check out the translation maintenance branch
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -58,12 +67,25 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/zhcn-tools"
           cp -a tools "${RUNNER_TEMP}/zhcn-tools/tools"
 
-      - name: Create a clean PR branch
+      - name: Create or advance the PR branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git switch -C "${ZHCN_BRANCH}" upstream/main
+          if git fetch "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "${ZHCN_BRANCH}"; then
+            git switch -C "${ZHCN_BRANCH}" FETCH_HEAD
+            if ! git merge-base --is-ancestor upstream/main HEAD; then
+              git merge --no-edit upstream/main
+            fi
+          else
+            git switch -C "${ZHCN_BRANCH}" upstream/main
+          fi
           git checkout main -- Locales/zhCN.lua
           test -f Locales/zhCN.lua
+          git diff --quiet || {
+            echo "The maintenance tool changed the locale during branch setup."
+            exit 1
+          }
 
       - name: Scan current coverage
         id: scan
@@ -92,6 +114,24 @@ jobs:
           ZHCN_ROOT: ${{ github.workspace }}
         run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
+      - name: Test the translator's glossary and retry handling
+        env:
+          ZHCN_ROOT: ${{ github.workspace }}
+          ZHCN_TOOL_ROOT: ${{ runner.temp }}/zhcn-tools
+        run: node tests/test_zhcn_tool.js
+
+      - name: Install LuaJIT for the author's native locale test
+        run: sudo apt-get update -q && sudo apt-get install -y -q luajit
+
+      - name: Fetch the game UI code used by the author's tests
+        run: python3 tools/fetch_blizzard.py
+
+      - name: Run the author's native locale test
+        shell: bash
+        run: |
+          set -o pipefail
+          luajit tests/run.lua --only test_locale 2>&1 | tee /tmp/zhcn-native-locale.txt
+
       - name: Upload translation review report
         if: steps.scan.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
@@ -110,17 +150,20 @@ jobs:
           git config user.name "DarkUI zhCN bot"
           git config user.email "zhcn-bot@users.noreply.github.com"
           git add -f Locales/zhCN.lua
-          git diff --cached --name-only | grep -qx "Locales/zhCN.lua" || {
-            echo "::error::The translator changed an unexpected file."
-            exit 1
-          }
+          changed_files=$(git diff --cached --name-only)
+          if [ "$changed_files" != "Locales/zhCN.lua" ]; then
+            if [ -n "$changed_files" ]; then
+              echo "::error::The translator changed an unexpected file: $changed_files"
+              exit 1
+            fi
+          fi
           if git diff --cached --quiet; then
-            echo "No translation change for ${UPSTREAM_SHORT}"
+            echo "No source translation change for ${UPSTREAM_SHORT}"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Verify the PR contains only the locale
@@ -141,38 +184,51 @@ jobs:
         shell: bash
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::error::GH_PR_TOKEN is not configured."
+            echo "::error::GH_PR_TOKEN is not configured; the automation branch was pushed, but no PR can be created."
             exit 1
           fi
-          existing=$(gh pr list --repo "${UPSTREAM_REPO}" --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" --state open --json number --jq '.[0].number // empty')
+
+          existing=$(gh pr list \
+            --repo "${UPSTREAM_REPO}" \
+            --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -z "$existing" ]; then
+            open_count=$(gh pr list --repo "${UPSTREAM_REPO}" --state open --limit 100 --json number --jq 'length')
+            if [ "$open_count" -ge 50 ]; then
+              echo "::error::The author already has ${open_count} open PRs; cannot create a new one."
+              exit 1
+            fi
+          fi
+
+          body=$(cat <<EOF
+          Automated Simplified Chinese localization update for upstream `${UPSTREAM_SHORT}`.
+
+          The workflow is designed to stay current as the author publishes new releases:
+          it reuses one automation branch and updates the same PR instead of opening a
+          new PR for every upstream commit.
+
+          Validation before the commit and PR:
+          - Coverage: no missing keys, English leftovers, duplicate keys, or format errors
+          - Glossary and AI retry regression test: passed
+          - Author's native locale test: \`luajit tests/run.lua --only test_locale\`: passed
+
+          Only \`Locales/zhCN.lua\` changes in the PR. No source files, settings or behavior
+          are changed. Later author updates merge the latest \`main\` into this branch and
+          translate whatever new text appears; if there is no new visible text, the diff
+          stays unchanged.
+          EOF
+          )
+
           if [ -n "$existing" ]; then
-            gh pr edit "$existing" --repo "${UPSTREAM_REPO}" --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" --body "$(cat <<EOF
-          Automated Simplified Chinese localization update for upstream `${UPSTREAM_SHORT}`.
-
-          The coverage checker scans literal locale keys, option labels/descriptions, helper arguments, cached choice tables and concatenated tooltip text. It also rejects entries that still contain English.
-
-          Validation:
-          - Missing keys: 0
-          - English leftovers: 0
-          - Duplicate keys: 0
-          - Format/empty errors: 0
-
-          Only `Locales/zhCN.lua` changes. No source files, settings or behavior are changed.
-          EOF
-          )"
+            gh pr edit "$existing" --repo "${UPSTREAM_REPO}" --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" --body "$body"
           else
-            gh pr create --repo "${UPSTREAM_REPO}" --base main --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" --body "$(cat <<EOF
-          Automated Simplified Chinese localization update for upstream `${UPSTREAM_SHORT}`.
-
-          The coverage checker scans literal locale keys, option labels/descriptions, helper arguments, cached choice tables and concatenated tooltip text. It also rejects entries that still contain English.
-
-          Validation:
-          - Missing keys: 0
-          - English leftovers: 0
-          - Duplicate keys: 0
-          - Format/empty errors: 0
-
-          Only `Locales/zhCN.lua` changes. No source files, settings or behavior are changed.
-          EOF
-          )"
+            gh pr create \
+              --repo "${UPSTREAM_REPO}" \
+              --base main \
+              --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
+              --title "locale(zhCN): complete Simplified Chinese for ${UPSTREAM_SHORT}" \
+              --body "$body"
           fi
