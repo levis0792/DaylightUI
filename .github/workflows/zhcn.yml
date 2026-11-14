@@ -44,6 +44,7 @@ jobs:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
       ZHCN_BRANCH: automation/zhcn
+      ZHCN_STATE_BRANCH: automation/zhcn-state
       API_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-v4.1-flash' }}
@@ -67,7 +68,10 @@ jobs:
           # still force a full pass with force=true.
           upstream_sha=$(git ls-remote "https://github.com/${UPSTREAM_REPO}.git" refs/heads/main | awk '{print $1}')
           test -n "$upstream_sha" || { echo "::error::Could not read the author's main."; exit 1; }
-          last=$(git log -1 --format='%(trailers:key=Upstream-SHA,valueonly)' "refs/remotes/origin/${ZHCN_BRANCH}" 2>/dev/null | tr -d '[:space:]')
+          # The last processed SHA lives on its own branch, so polling never
+          # touches the pull request branch and never invalidates the author's
+          # approval of the pull request checks.
+          last=$(git show "refs/remotes/origin/${ZHCN_STATE_BRANCH}:.upstream-sha" 2>/dev/null | tr -d '[:space:]')
           force="${{ inputs.force || 'false' }}"
           if [ "$force" != "true" ] && [ -n "$last" ] && [ "$last" = "$upstream_sha" ]; then
             echo "Upstream is still ${upstream_sha}; nothing to translate."
@@ -239,16 +243,33 @@ jobs:
           git add Locales/zhCN.lua
           if git diff --cached --quiet; then
             echo "No source translation change for ${UPSTREAM_SHORT}"
-            # Still record the commit, so the next scheduled run can stop early.
-            git commit --allow-empty -m "locale(zhCN): no change for upstream ${UPSTREAM_SHORT}" -m "Upstream-SHA: ${{ steps.changed.outputs.sha }}"
-            git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
+            # Do not touch the pull request branch: a new commit would throw
+            # away the author's approval of the pull request checks.
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}" -m "Upstream-SHA: ${{ steps.changed.outputs.sha }}"
+          git commit -m "locale(zhCN): update for upstream ${UPSTREAM_SHORT}"
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      - name: Record the processed upstream commit
+        if: steps.changed.outputs.needed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Kept on its own branch: polling must never move the PR branch,
+          # otherwise every run invalidates the author's approval of the checks.
+          state=$(mktemp -d)
+          cd "$state"
+          git init -q
+          git config user.name "DarkUI zhCN bot"
+          git config user.email "zhcn-bot@users.noreply.github.com"
+          printf '%s\n' "${{ steps.changed.outputs.sha }}" > .upstream-sha
+          git add .upstream-sha
+          git commit -q -m "state: upstream ${{ steps.upstream.outputs.short }}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_STATE_BRANCH}"
       - name: Verify the PR contains only the locale
         if: steps.changes.outputs.changed == 'true'
         shell: bash
