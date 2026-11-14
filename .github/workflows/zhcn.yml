@@ -118,15 +118,23 @@ jobs:
         env:
           ZHCN_ROOT: ${{ github.workspace }}
           ZHCN_TOOL_ROOT: ${{ runner.temp }}/zhcn-tools
-          ZHCN_WORKFLOW: ${{ runner.temp }}/zhcn-tools/zhcn.yml
         shell: bash
         run: |
-          set -o pipefail
+          set +e
+          exec > >(tee /tmp/zhcn-tool-test.log) 2>&1
+          echo "workspace=${ZHCN_ROOT}"
+          echo "tool_root=${ZHCN_TOOL_ROOT}"
+          ls -la "${ZHCN_TOOL_ROOT}"
           cp tests/test_zhcn_tool.js "${ZHCN_TOOL_ROOT}/test_zhcn_tool.js"
+          rc=$?; echo "cp_test=$rc"; [ "$rc" -ne 0 ] && exit "$rc"
           cp .github/workflows/zhcn.yml "${ZHCN_TOOL_ROOT}/zhcn.yml"
+          rc=$?; echo "cp_workflow=$rc"; [ "$rc" -ne 0 ] && exit "$rc"
           node --check "${ZHCN_TOOL_ROOT}/tools/zhcn.js"
+          rc=$?; echo "check_tool=$rc"; [ "$rc" -ne 0 ] && exit "$rc"
           node --check "${ZHCN_TOOL_ROOT}/test_zhcn_tool.js"
-          node "${ZHCN_TOOL_ROOT}/test_zhcn_tool.js" 2>&1 | tee /tmp/zhcn-tool-test.log
+          rc=$?; echo "check_test=$rc"; [ "$rc" -ne 0 ] && exit "$rc"
+          ZHCN_WORKFLOW="${ZHCN_TOOL_ROOT}/zhcn.yml" node "${ZHCN_TOOL_ROOT}/test_zhcn_tool.js"
+          rc=$?; echo "test_result=$rc"; exit "$rc"
 
       - name: Upload translator test output
         if: always()
