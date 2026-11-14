@@ -2,6 +2,7 @@
 // Maintain the zhCN localization in a fork of DaylightUI.
 //
 // Commands:
+// Trigger test marker.
 //   node tools/zhcn.js check
 //   node tools/zhcn.js missing
 //   node tools/zhcn.js translate
