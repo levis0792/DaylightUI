@@ -1,6 +1,8 @@
 name: Update zhCN translation
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       upstream_sha:
@@ -17,6 +19,8 @@ on:
     paths:
       - ".github/workflows/zhcn.yml"
       - "tools/zhcn.js"
+      - "tools/zhcn-glossary.json"
+      - "Locales/zhCN.lua"
       - "tests/test_zhcn_tool.js"
 
 permissions:

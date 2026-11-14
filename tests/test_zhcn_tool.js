@@ -58,6 +58,19 @@ async function main() {
   assert.equal(englishLeftover("Daylight UI: Bags", "Daylight UI: 背包"), false, "brand prefix stays English");
   assert.equal(retryable({ status: 401 }), false);
 
+  // Regression: whole English sentences left inside Chinese text.
+  assert.equal(englishLeftover("Kinds", "类型：gear, weapon, armor、食物"), true, "English word runs must be caught");
+  assert.equal(englishLeftover("Kinds", "类型：gear, weapon, armor, consumable"), true, "longer English runs are caught");
+  assert.equal(englishLeftover("Kinds", "类型：装备、武器、护甲"), false, "full Chinese stays fine");
+  assert.equal(englishLeftover("Quality", "品质：q>稀有、q>=优秀、q<史诗"), false, "search syntax tokens are not English");
+  assert.equal(englishLeftover("Keys", "Alt+上和Alt+下仍然有效。"), false, "key names are not English");
+  assert.equal(englishLeftover("Bars", "大条：240 x 60，3D头像"), false, "dimensions are not English");
+  assert.equal(englishLeftover("Channels", "[1. G] 为综合，[2. T] 为交易。"), false, "channel tags are not English");
+  assert.equal(englishLeftover("Icons", "安装 Jiberish Fabled Icons 插件"), false, "addon names stay English");
+  assert.equal(englishLeftover("Skins", "skins dump <Frame> [depth]：列出一个窗口"), false, "command docs stay English");
+  assert.equal(englishLeftover("Copy", "选中文字后按Ctrl+C复制。"), false, "Ctrl+C is not English");
+  assert.equal(englishLeftover("Support", "在Ko-fi上支持DaylightUI"), false, "donation platform stays English");
+
   const oldKey = process.env.API_KEY;
   const oldBase = process.env.OPENAI_BASE_URL;
   const oldModel = process.env.OPENAI_MODEL;

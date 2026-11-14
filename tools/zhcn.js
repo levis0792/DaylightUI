@@ -53,6 +53,9 @@ const ALLOWED_ENGLISH = new Set([
   "RestedXP Guides", "Threat Plates", "Archivo Narrow", "Arial Narrow",
   "Barlow Condensed", "Expressway", "Fira Sans", "Lato", "PT Sans Narrow",
   "Poppins", "Russo One", "DaylightUI", "DaylightUI Discord",
+  // Style and addon names users see in the UI, plus the donation page.
+  "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
+  "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
 ]);
@@ -73,6 +76,18 @@ const UI_ACTION_WORDS = new Set([
   "error", "settings", "setting",
 ]);
 
+// Short ASCII bits that legitimately sit inside a Chinese sentence:
+// search syntax (q>rare, ilvl>20), key names (Alt+Up, Ctrl+C), dimensions
+// (240 x 60), channel tags ([1. G]), and the like. They count as allowed
+// words, not as untranslated English.
+const MIXED_ASCII_WORDS = new Set([
+  'q', 'ilvl', 'x', 'g', 't', 'p', 's', 'y', 'w', 'c', 'a', 'z', 'n',
+  'boe', 'bou', 'set', 'h', 'm', 'k', 'id', 'frame', 'npcs', 'npc',
+  'up', 'down', 'left', 'right', 'zoom', 'in', 'out', 'shift',
+  'ctrl', 'alt', 'esc', 'del', 'ins', 'tab', '1k', '2k', '3k', '4k',
+  '5k', '6k', '7k', '8k', '9k',
+]);
+
 function stripCommandsAndCode(value) {
   return String(value)
     .replace(/\|c[0-9a-fA-F]{8}|\|r|\|T[^|]*\|t/g, "")
@@ -82,7 +97,7 @@ function stripCommandsAndCode(value) {
     // Remove a command and its ASCII arguments; the rest of the sentence is
     // still checked, so text after a command is not silently skipped.
     .replace(/\/[A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z0-9_%<>=|.-]+)*/g, "")
-    .replace(/[/_.[\]{}()<>:=+*\-]+/g, " ")
+    .replace(/[/_.[\]{}()<>:=+*\-：、，。；！？（）【】《》〈〉“”‘’…—]+/g, " ")
     .trim();
 }
 
@@ -100,8 +115,27 @@ function englishLeftover(key, value) {
   if (/^Daylight UI\s*:/i.test(String(value))) return false;
   if (/^[\w.-]+\.(?:png|tga|blp|ttf|otf)$/i.test(String(value))) return false;
   if (/^skins profile\b/i.test(String(value))) return false;
-  // A value with Chinese must not still contain an English UI action word.
+  if (/^skins\s+[a-z]/i.test(String(value))) return false;
+  // A value with Chinese must not still contain English. Two checks:
+  // 1) three or more ordinary English words in a row means an untranslated
+  //    sentence such as "types: gear, weapon, armor";
+  // 2) a single UI action word such as "Open" or "Save" is never allowed.
   if (hasHan(value)) {
+    const isOrdinary = (w) =>
+      !ALLOWED_ENGLISH.has(w) &&
+      !MIXED_ASCII_WORDS.has(w.toLowerCase()) &&
+      !UI_ACTION_WORDS.has(w.toLowerCase());
+    // Count only pure-ASCII tokens. "Calm 小而缓慢" is one Han-mixed
+    // token, not English; a real leak is several English words in a row,
+    // like "gear, weapon, armor".
+    const ascii = words.filter((w) => !hasHan(w));
+    let run = 0;
+    let longest = 0;
+    for (const w of ascii) {
+      run = isOrdinary(w) ? run + 1 : 0;
+      if (run > longest) longest = run;
+    }
+    if (longest >= 3) return true;
     return words.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()));
   }
   return words.some((w) => w.length >= 2);
