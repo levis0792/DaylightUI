@@ -113,10 +113,6 @@ jobs:
         if: steps.changed.outputs.needed == 'true'
         run: python3 tools/fetch_blizzard.py
 
-      - name: Export the author's runtime UI key set
-        if: steps.changed.outputs.needed == 'true'
-        run: luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
-
       - name: Stage the maintenance tools outside the PR branch
         if: steps.changed.outputs.needed == 'true'
         shell: bash
@@ -133,6 +129,9 @@ jobs:
           git show main:Locales/zhCN.lua > "${RUNNER_TEMP}/zhcn-fork.lua"
           git switch -C "${ZHCN_BRANCH}" upstream/main
           test -f Locales/zhCN.lua
+
+          # Export keys from the author's just-checked-out source, not the fork's.
+          luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
           # Start from the author's own locale, so anything already merged stays
           # as the author wrote it and nothing gets retranslated.
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" merge "${RUNNER_TEMP}/zhcn-fork.lua"
