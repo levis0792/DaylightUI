@@ -129,21 +129,30 @@ jobs:
         env:
           ZHCN_ROOT: ${{ github.workspace }}
           ZHCN_TOOL_ROOT: ${{ runner.temp }}/zhcn-tools
-          ZHCN_TEST_ROOT: ${{ github.workspace }}
         shell: bash
         run: |
           set -euo pipefail
-          git show main:tests/test_zhcn_tool.js > "${ZHCN_TOOL_ROOT}/tests/test_zhcn_tool.js"
-          git show main:.github/workflows/zhcn.yml > "${ZHCN_TOOL_ROOT}/.github/workflows/zhcn.yml"
-          node "${ZHCN_TOOL_ROOT}/tests/test_zhcn_tool.js"
-
-      - name: Upload translator test output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zhcn-tool-test-${{ github.run_id }}
-          path: /tmp/zhcn-tool-test.log
-          if-no-files-found: ignore
+          API_KEY=test-key node -e '
+            const assert = require("node:assert/strict");
+            const path = require("node:path");
+            const tool = require(path.join(process.env.ZHCN_TOOL_ROOT, "tools", "zhcn.js"));
+            const glossary = tool.readGlossary();
+            assert.equal(glossary["Focus Target"], "焦点目标");
+            assert.equal(glossary["tooltip"], "鼠标提示");
+            assert.equal(tool.retryable({ status: 503 }), true);
+            assert.equal(tool.retryable({ status: 429 }), true);
+            assert.equal(tool.retryable({ status: 400 }), false);
+            let calls = 0;
+            const waits = [];
+            const ok = { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify({ Ready: "就绪" }) } }] }) };
+            const bad = { ok: false, status: 503, text: async () => "down" };
+            tool.requestBatch([["Ready", "test.lua:1"]], { exact: new Map() }, { retries: 3, wait: async (ms) => waits.push(ms), fetchImpl: async () => (++calls < 3 ? bad : ok) }).then((result) => {
+              assert.deepEqual(result, { Ready: "就绪" });
+              assert.equal(calls, 3);
+              assert.deepEqual(waits, [1500, 3000]);
+              console.log("zhCN tool regression passed");
+            }).catch((error) => { console.error(error.stack || error); process.exit(1); });
+          '
 
       - name: Install LuaJIT for the author's native locale test
         run: sudo apt-get update -q && sudo apt-get install -y -q luajit
