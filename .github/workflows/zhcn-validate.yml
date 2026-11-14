@@ -31,4 +31,13 @@ jobs:
 
       - name: Validate complete locale coverage
         shell: bash
-        run: ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node tools/zhcn.js check
+        run: |
+          set +e
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node tools/zhcn.js check 2>&1 | tee /tmp/zhcn-check.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            echo "::error::zhCN check failed:"
+            tail -n 60 /tmp/zhcn-check.txt || true
+            exit "$code"
+          fi
+          echo "zhCN check passed"
