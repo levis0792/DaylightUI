@@ -107,7 +107,18 @@ jobs:
         if: steps.scan.outputs.needed == 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
-        run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate
+        shell: bash
+        run: |
+          set -o pipefail
+          node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate 2>&1 | tee /tmp/zhcn-ai.log
+
+      - name: Upload AI translation output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhcn-ai-log-${{ github.run_id }}
+          path: /tmp/zhcn-ai.log
+          if-no-files-found: ignore
 
       - name: Validate the author-facing file strictly
         env:
