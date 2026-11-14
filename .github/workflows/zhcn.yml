@@ -167,7 +167,6 @@ jobs:
           luajit tests/run.lua --only test_locale 2>&1 | tee /tmp/zhcn-native-locale.txt
 
       - name: Upload translation review report
-        if: steps.scan.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-ai-review-${{ steps.upstream.outputs.short }}
