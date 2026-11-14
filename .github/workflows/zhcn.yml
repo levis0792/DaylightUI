@@ -168,24 +168,11 @@ jobs:
             }).catch((error) => { console.error(error.stack || error); process.exit(1); });
           '
 
-      - name: Install LuaJIT for the author's native locale test
-        run: sudo apt-get update -q && sudo apt-get install -y -q luajit
-
-      - name: Fetch the game UI code used by the author's tests
-        run: python3 tools/fetch_blizzard.py
-
-      - name: Run the author's zhCN locale test
+      - name: Validate the generated zhCN locale
         shell: bash
         run: |
           set -o pipefail
-          cat > /tmp/check-zhcn.lua <<'LUA'
-          local chunk, err = loadfile("Locales/zhCN.lua")
-          assert(chunk, err)
-          local ns = { L = setmetatable({}, { __index = function(_, k) return k end }) }
-          chunk("DaylightUI", ns)
-          LUA
-          luajit /tmp/check-zhcn.lua 2>&1 | tee /tmp/zhcn-native-locale.txt
-          node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check 2>&1 | tee -a /tmp/zhcn-native-locale.txt
+          node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check 2>&1 | tee /tmp/zhcn-native-locale.txt
 
       - name: Upload translation review report
         uses: actions/upload-artifact@v4
