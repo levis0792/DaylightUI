@@ -98,6 +98,12 @@ jobs:
         run: |
           set -o pipefail
           node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate 2>&1 | tee /tmp/zhcn-ai.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            detail=$(tail -n 3 /tmp/zhcn-ai.log | tr "\n" " " | cut -c1-1000)
+            echo "::error::AI translation failed: ${detail}"
+            exit "$rc"
+          fi
 
       - name: Upload AI translation output
         if: always()
