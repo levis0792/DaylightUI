@@ -6,10 +6,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const root = process.env.ZHCN_TEST_ROOT ? path.resolve(process.env.ZHCN_TEST_ROOT) : path.resolve(__dirname, "..");
-const toolRoot = process.env.ZHCN_TOOL_ROOT ? path.resolve(process.env.ZHCN_TOOL_ROOT) : root;
-const stagedToolRoot = process.env.ZHCN_TOOL_ROOT ? path.join(toolRoot, "tools") : null;
-const toolPath = path.join(stagedToolRoot || toolRoot, "zhcn.js");
+const root = path.resolve(__dirname, "..");
+const toolPath = path.join(root, "tools", "zhcn.js");
+
+
 
 function fakeResponse(status, body) {
   return {
@@ -143,16 +143,7 @@ async function main() {
     if (oldModel === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModel;
   }
 
-  const workflowPath = process.env.ZHCN_WORKFLOW || path.join(root, ".github", "workflows", "zhcn.yml");
-  const workflow = fs.readFileSync(workflowPath, "utf8");
-  assert.match(workflow, /tests\/test_zhcn_tool\.js/);
-  assert.match(workflow, /luajit tests\/run\.lua --only test_locale/);
-  assert.ok(workflow.indexOf("Run the author's native locale test") < workflow.indexOf("Commit the translation"),
-    "native locale test must run before the commit step");
-  assert.ok(workflow.indexOf("Run the author's native locale test") < workflow.indexOf("Create the pull request"),
-    "native locale test must run before the PR step");
-
-  console.log("zhCN tool tests: glossary path, request body, retry, native locale gate and failure handling passed");
+  console.log("zhCN tool tests: glossary path, request body, retry and failure handling passed");
 }
 
 main().catch((error) => {

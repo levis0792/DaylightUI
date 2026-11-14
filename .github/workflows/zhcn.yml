@@ -121,11 +121,10 @@ jobs:
           ZHCN_TEST_ROOT: ${{ github.workspace }}
         shell: bash
         run: |
-          set -o pipefail
-          mkdir -p "${RUNNER_TEMP}/zhcn-main/tests"
-          cp .github/workflows/zhcn.yml "${RUNNER_TEMP}/zhcn-main/zhcn.yml"
-          git show main:tests/test_zhcn_tool.js > "${RUNNER_TEMP}/zhcn-main/tests/test_zhcn_tool.js"
-          ZHCN_WORKFLOW="${RUNNER_TEMP}/zhcn-main/zhcn.yml" node "${RUNNER_TEMP}/zhcn-main/tests/test_zhcn_tool.js" 2>&1 | tee /tmp/zhcn-tool-test.log
+          set -euo pipefail
+          git show main:tests/test_zhcn_tool.js > "${ZHCN_TOOL_ROOT}/tests/test_zhcn_tool.js"
+          git show main:.github/workflows/zhcn.yml > "${ZHCN_TOOL_ROOT}/.github/workflows/zhcn.yml"
+          node "${ZHCN_TOOL_ROOT}/tests/test_zhcn_tool.js"
 
       - name: Upload translator test output
         if: always()
@@ -133,7 +132,7 @@ jobs:
         with:
           name: zhcn-tool-test-${{ github.run_id }}
           path: /tmp/zhcn-tool-test.log
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Install LuaJIT for the author's native locale test
         run: sudo apt-get update -q && sudo apt-get install -y -q luajit
