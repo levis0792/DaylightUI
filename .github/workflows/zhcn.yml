@@ -50,6 +50,7 @@ jobs:
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-v4.1-flash' }}
       AI_RETRIES: ${{ vars.AI_RETRIES || '3' }}
       AI_RETRY_BASE_MS: ${{ vars.AI_RETRY_BASE_MS || '1500' }}
+      AI_WORKFLOW_RETRIES: ${{ vars.AI_WORKFLOW_RETRIES || '3' }}
     steps:
       - name: Check out the translation maintenance branch
         uses: actions/checkout@v4
@@ -156,6 +157,7 @@ jobs:
 
       - name: Check the translation endpoint configuration
         if: steps.changed.outputs.needed == 'true'
+        id: endpoint
         env:
           CHECK_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
           CHECK_BASE: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
@@ -167,14 +169,27 @@ jobs:
           fi
           echo "Translation endpoint: ${CHECK_BASE}"
           echo "API key is configured (length ${#CHECK_KEY})."
-          curl --silent --show-error --fail-with-body --max-time 20 \
-            -H "Authorization: Bearer ${CHECK_KEY}" \
-            "${CHECK_BASE%/}/models" > /tmp/zhcn-models.json || {
+          ok=false
+          attempt=0
+          while [ "$attempt" -lt 3 ] && [ "$ok" != true ]; do
+            attempt=$((attempt + 1))
+            if curl --silent --show-error --fail-with-body --max-time 20 \
+              -H "Authorization: Bearer ${CHECK_KEY}" \
+              "${CHECK_BASE%/}/models" > /tmp/zhcn-models.json; then
+              ok=true
+            else
               code=$?
-              echo "::error::Translation endpoint check failed with exit code ${code}."
-              exit "$code"
-            }
-          echo "Translation endpoint responded successfully."
+              echo "::warning::Translation endpoint attempt ${attempt}/3 failed (exit ${code})."
+              [ "$attempt" -lt 3 ] && sleep $((5 * attempt))
+            fi
+          done
+          if [ "$ok" = true ]; then
+            echo "endpoint_ok=true" >> "$GITHUB_OUTPUT"
+            echo "Translation endpoint responded successfully."
+          else
+            echo "endpoint_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Translation endpoint unavailable after 3 attempts; continuing in retry-only mode."
+          fi
 
       - name: Translate missing or untranslated strings
         if: steps.scan.outputs.needed == 'true'
@@ -183,11 +198,35 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate 2>&1 | tee /tmp/zhcn-ai.log
-          rc=${PIPESTATUS[0]}
+          attempts="${AI_WORKFLOW_RETRIES}"
+          case "$attempts" in
+            ""|*[!0-9]*) attempts=3 ;;
+          esac
+          [ "$attempts" -lt 1 ] && attempts=3
+          [ "$attempts" -gt 10 ] && attempts=10
+          attempt=0
+          last_detail="unknown"
+          while [ "$attempt" -lt "$attempts" ]; do
+            attempt=$((attempt + 1))
+            echo "::group::AI translation attempt ${attempt}/${attempts}"
+            ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate 2>&1 | tee /tmp/zhcn-ai.log
+            rc=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            last_detail=$(tail -n 3 /tmp/zhcn-ai.log | tr "\n" " " | cut -c1-1000)
+            if [ "$rc" -eq 0 ]; then
+              echo "Translation succeeded on attempt ${attempt}."
+              break
+            fi
+            echo "::warning::AI translation attempt ${attempt}/${attempts} failed: ${last_detail}"
+            if [ "$attempt" -lt "$attempts" ]; then
+              delay=$((10 * attempt * attempt))
+              echo "Retrying in ${delay}s"
+              sleep "$delay"
+            fi
+          done
           if [ "$rc" -ne 0 ]; then
-            detail=$(tail -n 3 /tmp/zhcn-ai.log | tr "\n" " " | cut -c1-1000)
-            echo "::error::AI translation failed: ${detail}"
+            echo "::error::AI translation failed after ${attempts} workflow attempts: ${last_detail}"
+            echo "::notice::Locale was left unchanged; the next NAS poll or a push to tools/zhcn.js will retry the same upstream commit."
             exit "$rc"
           fi
 
