@@ -267,6 +267,25 @@ function normal(s) {
   return String(s).toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// Pull only related reviewed pairs for this batch, rather than resending the
+// whole memory table on every request.
+function relatedMemory(memory, batch, limit = 24) {
+  const words = new Set();
+  for (const [key] of batch) {
+    for (const word of String(key).toLowerCase().match(/[a-z]{3,}/g) || []) words.add(word);
+  }
+  if (!words.size) return [];
+  const scored = [];
+  for (const [key, value] of memory.exact) {
+    const lower = String(key).toLowerCase();
+    let score = 0;
+    for (const word of words) if (lower.includes(word)) score += 1;
+    if (score) scored.push([score, key, value]);
+  }
+  scored.sort((a, b) => b[0] - a[0] || a[1].localeCompare(b[1]));
+  return scored.slice(0, limit).map(([, key, value]) => [key, value]);
+}
+
 function translationMemory(entries) {
   const exact = new Map(entries);
   const approx = new Map();
@@ -357,8 +376,7 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
   if (!key) throw new Error('Repository secret API_KEY is not set');
   const base = (process.env.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1').replace(/\/$/, '');
   const model = opts.model || (opts.review ? reviewModel() : requestModel());
-  const context = [];
-  for (const [k, v] of [...memory.exact].slice(-250)) context.push([k, v]);
+  const context = relatedMemory(memory, batch);
   const glossary = readGlossary();
   const system = [
     'You translate World of Warcraft addon UI text from English to Simplified Chinese.',
@@ -515,21 +533,23 @@ async function translate() {
   if (risky.length && process.env.ZHCN_REVIEW !== 'false') {
     const reviewMemory = translationMemory(new Map([...entries, ...Object.entries(result)]));
     const models = reviewModels();
-    for (const k of risky) {
-      const row = [k, cat.get(k).refs.slice(0, 3).join(', '), nearbyContext(cat, k, cat.get(k).refs)];
+    const reviewBatchSize = integerEnv('ZHCN_REVIEW_BATCH_SIZE', 6, 1);
+    for (let i = 0; i < risky.length; i += reviewBatchSize) {
+      const keys = risky.slice(i, i + reviewBatchSize);
+      const rows = keys.map((k) => [k, cat.get(k).refs.slice(0, 3).join(', '), nearbyContext(cat, k, cat.get(k).refs)]);
       let reviewed;
       let lastError;
       for (const model of models) {
         try {
-          reviewed = await requestBatch([row], reviewMemory, { review: true, model });
+          reviewed = await requestBatch(rows, reviewMemory, { review: true, model });
           break;
         } catch (e) {
           lastError = e;
-          console.error('Review model ' + model + ' failed for ' + JSON.stringify(k) + ': ' + (e.message || e));
+          console.error('Review model ' + model + ' failed for batch ' + (i / reviewBatchSize + 1) + ': ' + (e.message || e));
         }
       }
-      if (reviewed && reviewed[k]) result[k] = reviewed[k];
-      else reviewFailures.push({ key: k, error: String((lastError && lastError.message) || lastError || 'review omitted') });
+      if (reviewed) Object.assign(result, reviewed);
+      else for (const k of keys) reviewFailures.push({ key: k, error: String((lastError && lastError.message) || lastError || 'review omitted') });
     }
   }
   console.log('High-risk strings reviewed: ' + risky.length + (reviewFailures.length ? ' (' + reviewFailures.length + ' failed)' : ''));
@@ -566,4 +586,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, requestModel, reviewModel, reviewModels, batchSize };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize };

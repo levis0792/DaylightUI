@@ -88,6 +88,8 @@ async function main() {
   if (oldFallback === undefined) delete process.env.ZHCN_REVIEW_FALLBACK_MODEL; else process.env.ZHCN_REVIEW_FALLBACK_MODEL = oldFallback;
   if (oldLast === undefined) delete process.env.ZHCN_REVIEW_LAST_MODEL; else process.env.ZHCN_REVIEW_LAST_MODEL = oldLast;
 
+  const { relatedMemory } = require(toolPath);
+  assert.deepEqual(relatedMemory({ exact: new Map([["Bar animation", "状态条动画"], ["Unrelated", "无关"]]) }, [["Bar styles", "x"]]), [["Bar animation", "状态条动画"]]);
   const { requestOnce, requestBatch, readGlossary, retryable } = require(toolPath);
   const { englishLeftover } = require(toolPath);
 
