@@ -296,11 +296,67 @@ function retryable(error) {
   return error && (error.retryable === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
 }
 
-async function requestOnce(batch, memory, fetchImpl = globalThis.fetch) {
+function requestModel() {
+  return process.env.OPENAI_MODEL || 'deepseek-v4.1-flash';
+}
+
+function reviewModels() {
+  const configured = [
+    process.env.ZHCN_REVIEW_MODEL || 'glm-5.3',
+    process.env.ZHCN_REVIEW_FALLBACK_MODEL || 'deepseek-v4-pro',
+    process.env.ZHCN_REVIEW_LAST_MODEL || 'hy4-preview-x',
+    requestModel(),
+  ];
+  return [...new Set(configured.filter(Boolean))];
+}
+
+function reviewModel() {
+  return reviewModels()[0];
+}
+
+function batchSize() {
+  return integerEnv('ZHCN_BATCH_SIZE', 12, 1);
+}
+
+function contextWindow() {
+  return integerEnv('ZHCN_CONTEXT_LINES', 6, 0);
+}
+
+function highRisk(key, ref) {
+  const text = String(key);
+  const holes = (text.match(/%(?:%|[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g) || []).length;
+  const clauses = (text.match(/[.;:!?]|\b(?:and|or|but|if|when|while|unless|before|after)\b/gi) || []).length;
+  const moduleName = String(ref || '').split(/[/:]/)[0];
+  return text.length >= 80 || holes >= 2 || clauses >= 2 || /(?:^|[/_-])(?:new|unreleased)(?:[/_.-]|$)/i.test(moduleName);
+}
+
+function nearbyContext(cat, key, refs) {
+  const window = contextWindow();
+  if (!window) return [];
+  const anchor = String((refs && refs[0]) || '');
+  if (!anchor) return [];
+  const file = anchor.replace(/:\d+$/, '');
+  const line = Number((anchor.match(/:(\d+)$/) || [])[1] || 0);
+  if (!file || !line) return [];
+  const rows = [];
+  for (const [other, item] of cat) {
+    for (const at of item.refs) {
+      const m = String(at).match(/^(.*):(\d+)$/);
+      if (!m || m[1] !== file) continue;
+      const n = Number(m[2]);
+      if (other === key || Math.abs(n - line) > window) continue;
+      rows.push([Math.abs(n - line), n, other]);
+    }
+  }
+  rows.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return rows.slice(0, window).map((row) => row[2]);
+}
+
+async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
   const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
   if (!key) throw new Error('Repository secret API_KEY is not set');
   const base = (process.env.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1').replace(/\/$/, '');
-  const model = process.env.OPENAI_MODEL || 'deepseek-v4.1-flash';
+  const model = opts.model || (opts.review ? reviewModel() : requestModel());
   const context = [];
   for (const [k, v] of [...memory.exact].slice(-250)) context.push([k, v]);
   const glossary = readGlossary();
@@ -315,10 +371,11 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch) {
     'Do not translate slash commands, setting keys, font names, URLs or code identifiers.',
     'If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.',
     'Use the supplied reviewed pairs as translation memory for terminology.',
-    'Each requested row has original_english and source_location. Translate original_english; source_location is only a file reference and must never be returned as a translation.',
+    'Use nearby_ui_text only to keep the same terminology and tone; never return it as a translation.',
+    'Each requested row has original_english, source_location and nearby_ui_text. Translate original_english; source_location is only a file reference and must never be returned as a translation.',
     'Required glossary: ' + JSON.stringify(glossary),
   ].join(' ');
-  const requested = batch.map(([original_english, source_location]) => ({ original_english, source_location }));
+  const requested = batch.map(([original_english, source_location, nearby_ui_text]) => ({ original_english, source_location, nearby_ui_text: nearby_ui_text || [] }));
   const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: requested }, null, 2);
   const res = await fetchImpl(base + '/chat/completions', {
     signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
@@ -339,7 +396,7 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch) {
   try {
     const data = JSON.parse(text);
     let content = data.choices[0].message.content.trim();
-    content = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    content = content.replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/, '');
     const first = content.indexOf('{');
     const last = content.lastIndexOf('}');
     if (first >= 0 && last > first) content = content.slice(first, last + 1);
@@ -392,7 +449,7 @@ async function requestBatch(batch, memory, opts = {}) {
   let last;
   for (let attempt = 1; attempt <= tries; attempt++) {
     try {
-      return await requestOnce(batch, memory, fetchImpl);
+      return await requestOnce(batch, memory, fetchImpl, { review: opts.review === true, model: opts.model });
     } catch (e) {
       last = e;
       const canRetry = retryable(e);
@@ -434,10 +491,10 @@ async function translate() {
   const remaining = missing.filter((k) => !(k in result));
   console.log(`Translation memory reused: ${missing.length - remaining.length}`);
   console.log(`AI translation needed: ${remaining.length}`);
-  const size = Math.max(1, Number(process.env.ZHCN_BATCH_SIZE || 20));
+  const size = batchSize();
   const failed = [];
   for (let i = 0; i < remaining.length; i += size) {
-    const batch = remaining.slice(i, i + size).map((k) => [k, cat.get(k).refs.slice(0, 3).join(", ")]);
+    const batch = remaining.slice(i, i + size).map((k) => [k, cat.get(k).refs.slice(0, 3).join(", "), nearbyContext(cat, k, cat.get(k).refs)]);
     console.log(`AI batch ${i / size + 1}/${Math.ceil(remaining.length / size)} (${batch.length} strings)`);
     try {
       Object.assign(result, await requestBatch(batch, memory));
@@ -446,13 +503,39 @@ async function translate() {
       for (const [key] of batch) failed.push({ key, error: String(e.message || e) });
     }
   }
-  const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
-  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-  fs.writeFileSync(reportPath, JSON.stringify({ translations: result, failed }, null, 2) + "\n", "utf8");
   if (failed.length) {
     console.error(`Translation incomplete: ${failed.length} AI failures.`);
     process.exit(1);
   }
+
+  // Second pass: only long, multi-placeholder or condition-heavy rows go to
+  // the review model. Ordinary short labels stay on the fast model.
+  const risky = remaining.filter((k) => highRisk(k, (cat.get(k).refs || [])[0]));
+  const reviewFailures = [];
+  if (risky.length && process.env.ZHCN_REVIEW !== 'false') {
+    const reviewMemory = translationMemory(new Map([...entries, ...Object.entries(result)]));
+    const models = reviewModels();
+    for (const k of risky) {
+      const row = [k, cat.get(k).refs.slice(0, 3).join(', '), nearbyContext(cat, k, cat.get(k).refs)];
+      let reviewed;
+      let lastError;
+      for (const model of models) {
+        try {
+          reviewed = await requestBatch([row], reviewMemory, { review: true, model });
+          break;
+        } catch (e) {
+          lastError = e;
+          console.error('Review model ' + model + ' failed for ' + JSON.stringify(k) + ': ' + (e.message || e));
+        }
+      }
+      if (reviewed && reviewed[k]) result[k] = reviewed[k];
+      else reviewFailures.push({ key: k, error: String((lastError && lastError.message) || lastError || 'review omitted') });
+    }
+  }
+  console.log('High-risk strings reviewed: ' + risky.length + (reviewFailures.length ? ' (' + reviewFailures.length + ' failed)' : ''));
+  const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, JSON.stringify({ translations: result, failed, reviewFailures }, null, 2) + "\n", "utf8");
 
   // Write the locale only after every batch succeeded, and run the strict
   // check once more right before writing. A failed run leaves the file
@@ -483,4 +566,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, requestModel, reviewModel, reviewModels, batchSize };

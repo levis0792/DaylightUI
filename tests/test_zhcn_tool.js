@@ -60,6 +60,34 @@ async function main() {
   delete process.env.ZHCN_ROOT;
   fs.rmSync(dedupeRoot, { recursive: true, force: true });
   delete require.cache[require.resolve(toolPath)];
+  const { highRisk, batchSize, requestModel, reviewModel, reviewModels } = require(toolPath);
+
+  assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), false);
+  assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
+  assert.equal(highRisk('%s and %d', 'Bags/Options.lua:1'), true, 'multiple placeholders are high risk');
+
+  const oldBatch = process.env.ZHCN_BATCH_SIZE;
+  delete process.env.ZHCN_BATCH_SIZE;
+  assert.equal(batchSize(), 12, 'default batch size is 12');
+  process.env.ZHCN_BATCH_SIZE = '7';
+  assert.equal(batchSize(), 7);
+  if (oldBatch === undefined) delete process.env.ZHCN_BATCH_SIZE; else process.env.ZHCN_BATCH_SIZE = oldBatch;
+  const oldModelForRouting = process.env.OPENAI_MODEL;
+  const oldReview = process.env.ZHCN_REVIEW_MODEL;
+  const oldFallback = process.env.ZHCN_REVIEW_FALLBACK_MODEL;
+  const oldLast = process.env.ZHCN_REVIEW_LAST_MODEL;
+  delete process.env.OPENAI_MODEL;
+  delete process.env.ZHCN_REVIEW_MODEL;
+  delete process.env.ZHCN_REVIEW_FALLBACK_MODEL;
+  delete process.env.ZHCN_REVIEW_LAST_MODEL;
+  assert.equal(requestModel(), 'deepseek-v4.1-flash');
+  assert.equal(reviewModel(), 'glm-5.3');
+  assert.deepEqual(reviewModels(), ['glm-5.3', 'deepseek-v4-pro', 'hy4-preview-x', 'deepseek-v4.1-flash']);
+  if (oldModelForRouting === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModelForRouting;
+  if (oldReview === undefined) delete process.env.ZHCN_REVIEW_MODEL; else process.env.ZHCN_REVIEW_MODEL = oldReview;
+  if (oldFallback === undefined) delete process.env.ZHCN_REVIEW_FALLBACK_MODEL; else process.env.ZHCN_REVIEW_FALLBACK_MODEL = oldFallback;
+  if (oldLast === undefined) delete process.env.ZHCN_REVIEW_LAST_MODEL; else process.env.ZHCN_REVIEW_LAST_MODEL = oldLast;
+
   const { requestOnce, requestBatch, readGlossary, retryable } = require(toolPath);
   const { englishLeftover } = require(toolPath);
 
@@ -93,7 +121,7 @@ async function main() {
 
   const oldKey = process.env.API_KEY;
   const oldBase = process.env.OPENAI_BASE_URL;
-  const oldModel = process.env.OPENAI_MODEL;
+  const oldModelForRequest = process.env.OPENAI_MODEL;
   process.env.API_KEY = "test-key";
   process.env.OPENAI_MODEL = "test-model";
 
@@ -109,6 +137,9 @@ async function main() {
         assert.match(payload.messages[0].content, /Required glossary:/);
         assert.match(payload.messages[0].content, /"Focus Target":"焦点目标"/);
         assert.match(payload.messages[0].content, /"tooltip":"鼠标提示"/);
+        const userPayload = JSON.parse(payload.messages[1].content);
+        assert.equal(userPayload.strings_to_translate[0].source_location, "Some.lua:10");
+        assert.ok(Array.isArray(userPayload.strings_to_translate[0].nearby_ui_text), "nearby context must be sent");
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(completion(JSON.stringify({ "Press %s": "按下 %s" }))));
       });
@@ -180,7 +211,7 @@ async function main() {
   } finally {
     if (oldKey === undefined) delete process.env.API_KEY; else process.env.API_KEY = oldKey;
     if (oldBase === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = oldBase;
-    if (oldModel === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModel;
+    if (oldModelForRequest === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModelForRequest;
   }
 
   console.log("zhCN tool tests: glossary path, request body, retry and failure handling passed");
