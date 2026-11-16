@@ -650,6 +650,81 @@ async function translateConsensus() {
   applyData(final, "multi-model consensus", { replace: true });
   console.log(`Consensus pass wrote ${Object.keys(final).length} entries.`);
 }
+function consensusAllFile() {
+  return path.join(root, "tools", "reports", "zhcn-consensus-all.json");
+}
+
+function readConsensusAll() {
+  const file = consensusAllFile();
+  if (!fs.existsSync(file)) return { batches: {} };
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function writeConsensusAll(data) {
+  const file = consensusAllFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
+}
+
+// Rebuild every key through several models and a judge. Only this mode
+// retranslates text that the author already has. Progress is checkpointed.
+async function rebuildAll() {
+  const { cat } = report({ missingOnly: true });
+  const keys = [...cat.keys()];
+  const size = integerEnv("ZHCN_REBUILD_BATCH_SIZE", 10, 1);
+  const judge = process.env.ZHCN_JUDGE_MODEL || "deepseek-v4-pro";
+  const models = (process.env.ZHCN_CONSENSUS_MODELS || "deepseek-v4.1-flash,glm-5.3,hy4-preview-x")
+    .split(",").map((x) => x.trim()).filter(Boolean);
+  const state = readConsensusAll();
+  state.batches = state.batches || {};
+  const total = Math.ceil(keys.length / size);
+  for (let i = 0; i < keys.length; i += size) {
+    const batchKeys = keys.slice(i, i + size);
+    const id = batchKeys[0];
+    if (state.batches[id] && state.batches[id].complete) {
+      console.log(`Rebuild batch ${i / size + 1}/${total}: already done.`);
+      continue;
+    }
+    const emptyMemory = translationMemory(new Map());
+    const rows = batchKeys.map((k) => [k, cat.get(k).refs.slice(0, 3).join(", "), nearbyContext(cat, k, cat.get(k).refs)]);
+    const candidates = {};
+    for (const model of models) {
+      console.log(`Rebuild batch ${i / size + 1}/${total}: ${model}`);
+      try { candidates[model] = await requestBatch(rows, emptyMemory, { model }); }
+      catch (e) { console.error(`Candidate ${model} failed: ${e.message || e}`); }
+    }
+    if (!Object.keys(candidates).length) throw new Error("Every rebuild candidate failed for this batch");
+    const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
+    if (!key) throw new Error("Repository secret API_KEY is not set");
+    const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
+    const prompt = [
+      { role: "system", content: "You are the senior Simplified Chinese reviewer for a World of Warcraft addon. Pick or merge the best translation for each English key. Preserve every printf placeholder and color code exactly. Return only JSON mapping each English key to the final Chinese string." },
+      { role: "user", content: JSON.stringify({ candidates }, null, 2) },
+    ];
+    const res = await fetch(base + "/chat/completions", {
+      signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      body: JSON.stringify({ model: judge, messages: prompt }),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Judge ${judge} failed (${res.status}): ${text.slice(0, 1000)}`);
+    const parsed = JSON.parse(JSON.parse(text).choices[0].message.content);
+    for (const k of batchKeys) {
+      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
+        throw new Error("Judge returned an invalid translation for " + JSON.stringify(k));
+      }
+    }
+    state.batches[id] = { complete: true, translations: parsed };
+    writeConsensusAll(state);
+  }
+  const final = {};
+  for (const batch of Object.values(state.batches)) Object.assign(final, batch.translations || {});
+  console.log(`Rebuild finished with ${Object.keys(final).length} entries.`);
+  const ordered = Object.keys(final).sort().map((k) => `L[${luaQuote(k)}] = ${luaQuote(final[k])}`);
+  fs.writeFileSync(localePath, "-- Simplified Chinese (zhCN).\nlocal _, DUI = ...\nif DUI.LOCALE ~= \"zhCN\" then return end\nlocal L = DUI.L\n\n" + ordered.join("\n") + "\n", "utf8");
+  report();
+}
 if (require.main === module) {
   const cmd = process.argv[2] || "check";
   if (cmd === "missing") report({ missingOnly: true });
@@ -663,10 +738,11 @@ if (require.main === module) {
   else if (cmd === "override") override(process.argv[3]);
   else if (cmd === "translate") translate().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else if (cmd === "consensus") translateConsensus().catch((e) => { console.error(e.stack || e); process.exit(1); });
+  else if (cmd === "rebuild") rebuildAll().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else {
-    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|apply|merge|dedupe|override <json>");
+    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|rebuild|apply|merge|dedupe|override <json>");
     process.exit(2);
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll };

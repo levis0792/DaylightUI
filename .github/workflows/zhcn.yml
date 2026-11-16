@@ -10,13 +10,14 @@ on:
         required: false
         type: string
       mode:
-        description: "translate (incremental) or consensus (full multi-model baseline)"
+        description: "translate (incremental), consensus (missing only) or rebuild (all strings)"
         required: false
         default: "translate"
         type: choice
         options:
           - translate
           - consensus
+          - rebuild
       trigger_note:
         description: "Run title marker used by the monitor to avoid duplicate runs"
         required: false
@@ -234,6 +235,7 @@ jobs:
             echo "::group::AI translation attempt ${attempt}/${attempts}"
             command=translate
             [ "${{ inputs.mode }}" = "consensus" ] && command=consensus
+            [ "${{ inputs.mode }}" = "rebuild" ] && command=rebuild
             ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" "$command" 2>&1 | tee /tmp/zhcn-ai.log
             rc=${PIPESTATUS[0]}
             echo "::endgroup::"
@@ -286,7 +288,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-consensus-${{ github.run_id }}
-          path: ${{ runner.temp }}/zhcn-tools/tools/reports/zhcn-consensus.json
+          path: |
+            ${{ runner.temp }}/zhcn-tools/tools/reports/zhcn-consensus.json
+            ${{ runner.temp }}/zhcn-tools/tools/reports/zhcn-consensus-all.json
           if-no-files-found: ignore
 
       - name: Upload translation review report
