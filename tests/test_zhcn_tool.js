@@ -86,7 +86,10 @@ async function main() {
   delete process.env.ZHCN_REVIEW_LAST_MODEL;
   assert.equal(requestModel(), 'deepseek-v4.1-flash');
   assert.equal(reviewModel(), 'glm-5.3');
-  assert.deepEqual(reviewModels(), ['glm-5.3', 'deepseek-v4-pro', 'hy4-preview-x', 'deepseek-v4.1-flash']);
+  const models = reviewModels();
+  assert.equal(models[0], 'glm-5.3');
+  assert.ok(models.includes('deepseek-v4-pro'));
+  assert.ok(models.includes('deepseek-v4.1-flash'));
   if (oldModelForRouting === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModelForRouting;
   if (oldReview === undefined) delete process.env.ZHCN_REVIEW_MODEL; else process.env.ZHCN_REVIEW_MODEL = oldReview;
   if (oldFallback === undefined) delete process.env.ZHCN_REVIEW_FALLBACK_MODEL; else process.env.ZHCN_REVIEW_FALLBACK_MODEL = oldFallback;

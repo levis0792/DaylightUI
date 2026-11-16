@@ -139,6 +139,8 @@ jobs:
           rm -rf "${RUNNER_TEMP}/zhcn-tools"
           mkdir -p "${RUNNER_TEMP}/zhcn-tools"
           cp -a tools "${RUNNER_TEMP}/zhcn-tools/tools"
+          mkdir -p "${RUNNER_TEMP}/zhcn-tools/tests"
+          cp -a tests/test_zhcn_tool.js "${RUNNER_TEMP}/zhcn-tools/tests/test_zhcn_tool.js"
 
       - name: Create the PR branch from the author's current main
         if: steps.changed.outputs.needed == 'true'
