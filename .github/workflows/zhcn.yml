@@ -80,6 +80,8 @@ jobs:
           git switch -C "${ZHCN_BRANCH}" upstream/main
           git checkout main -- Locales/zhCN.lua
           test -f Locales/zhCN.lua
+          # Upstream can add a string that already exists; keep its last definition.
+          ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" dedupe
 
       - name: Scan current coverage
         id: scan
@@ -146,7 +148,7 @@ jobs:
           ZHCN_ROOT: ${{ github.workspace }}
         run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
-      - name: Test the translator's glossary and retry handling
+      - name: Test deduplication and translator retry handling
         env:
           ZHCN_ROOT: ${{ github.workspace }}
           ZHCN_TOOL_ROOT: ${{ runner.temp }}/zhcn-tools

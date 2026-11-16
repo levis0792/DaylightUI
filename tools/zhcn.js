@@ -111,6 +111,35 @@ function catalog() {
   return extract(root);
 }
 
+// Remove duplicate `L["..."]` definitions while keeping the last one, which
+// is the value Lua actually uses. Upstream occasionally adds a string that
+// already exists near the top of the locale file; without this, every later
+// strict check fails even when coverage is complete.
+function dedupe() {
+  const { src, duplicates } = readLocale();
+  if (!duplicates.length) return 0;
+  const lines = src.split("\n");
+  const last = new Map();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
+    if (!m) continue;
+    try { last.set(JSON.parse(m[1]), i); } catch (e) {}
+  }
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
+    if (m) {
+      try {
+        if (last.get(JSON.parse(m[1])) !== i) continue;
+      } catch (e) {}
+    }
+    out.push(lines[i]);
+  }
+  fs.writeFileSync(localePath, out.join("\n"), "utf8");
+  const removed = duplicates.length;
+  console.log(`Removed ${removed} duplicate locale entr${removed === 1 ? "y" : "ies"} (kept the last definition).`);
+  return removed;
+}
 function report({ missingOnly = false } = {}) {
   const cat = catalog();
   const { entries, duplicates } = readLocale();
@@ -373,11 +402,12 @@ if (require.main === module) {
     if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length) process.exit(1);
   }
   else if (cmd === "apply") apply(process.argv[3]);
+  else if (cmd === "dedupe") dedupe();
   else if (cmd === "translate") translate().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else {
-    console.error("Usage: node tools/zhcn.js check|missing|translate|apply <json>");
+    console.error("Usage: node tools/zhcn.js check|missing|translate|apply|dedupe <json>");
     process.exit(2);
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe };
