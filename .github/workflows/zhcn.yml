@@ -136,6 +136,8 @@ jobs:
           # Start from the author's own locale, so anything already merged stays
           # as the author wrote it and nothing gets retranslated.
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" merge "${RUNNER_TEMP}/zhcn-fork.lua"
+          # Upstream can add a string that already exists; keep its last definition.
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" dedupe
           # Force the reviewed terms (spacing, fixed game words) over whatever the author or AI has.
           if [ -f "${RUNNER_TEMP}/zhcn-tools/tools/zhcn-overrides.json" ]; then
             ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" override "${RUNNER_TEMP}/zhcn-tools/tools/zhcn-overrides.json"
