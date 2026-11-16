@@ -1,6 +1,7 @@
 name: Update zhCN translation
 
 on:
+  # rerun marker: test file staged (fa38e8f fix)
   # Triggered every 30 minutes by the NAS. GitHub's own cron is unreliable on
   # forks, so the schedule block was removed on purpose.
   workflow_dispatch:
