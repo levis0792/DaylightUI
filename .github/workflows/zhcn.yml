@@ -124,6 +124,8 @@ jobs:
           # Start from the author's own locale, so anything already merged stays
           # as the author wrote it and nothing gets retranslated.
           ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" merge "${RUNNER_TEMP}/zhcn-fork.lua"
+          # Upstream can add a string that already exists; keep its last definition.
+          ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" dedupe
           echo "Base: the author's locale plus only the entries it is missing."
 
       - name: Scan current coverage
@@ -195,7 +197,7 @@ jobs:
           ZHCN_ROOT: ${{ github.workspace }}
         run: node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
-      - name: Test the translator's glossary and retry handling
+      - name: Test deduplication and translator retry handling
         if: steps.changed.outputs.needed == 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}

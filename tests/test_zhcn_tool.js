@@ -40,6 +40,26 @@ async function withServer(handler, fn) {
 async function main() {
   assert.equal(spawnSync(process.execPath, ["--check", toolPath], { encoding: "utf8" }).status, 0,
     "tools/zhcn.js must parse");
+  const os = require("node:os");
+  const dedupeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-dedupe-"));
+  fs.mkdirSync(path.join(dedupeRoot, "Locales"), { recursive: true });
+  fs.writeFileSync(path.join(dedupeRoot, "Locales", "zhCN.lua"), [
+    'L["%d days ago"] = "旧译文"',
+    'L["Keep"] = "保留"',
+    'L["%d days ago"] = "新译文"',
+    "",
+  ].join("\n"), "utf8");
+  process.env.ZHCN_ROOT = dedupeRoot;
+  delete require.cache[require.resolve(toolPath)];
+  const deduped = require(toolPath);
+  assert.equal(deduped.dedupe(), 1);
+  const dedupeText = fs.readFileSync(path.join(dedupeRoot, "Locales", "zhCN.lua"), "utf8");
+  assert.equal((dedupeText.match(/%d days ago/g) || []).length, 1);
+  assert.match(dedupeText, /新译文/);
+  assert.doesNotMatch(dedupeText, /旧译文/);
+  delete process.env.ZHCN_ROOT;
+  fs.rmSync(dedupeRoot, { recursive: true, force: true });
+  delete require.cache[require.resolve(toolPath)];
   const { requestOnce, requestBatch, readGlossary, retryable } = require(toolPath);
   const { englishLeftover } = require(toolPath);
 
