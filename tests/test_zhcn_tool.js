@@ -76,6 +76,10 @@ async function main() {
   const oldReview = process.env.ZHCN_REVIEW_MODEL;
   const oldFallback = process.env.ZHCN_REVIEW_FALLBACK_MODEL;
   const oldLast = process.env.ZHCN_REVIEW_LAST_MODEL;
+  const oldReviewEnabled = process.env.ZHCN_REVIEW;
+  const oldReviewBatch = process.env.ZHCN_REVIEW_BATCH_SIZE;
+  delete process.env.ZHCN_REVIEW;
+  delete process.env.ZHCN_REVIEW_BATCH_SIZE;
   delete process.env.OPENAI_MODEL;
   delete process.env.ZHCN_REVIEW_MODEL;
   delete process.env.ZHCN_REVIEW_FALLBACK_MODEL;
@@ -88,6 +92,8 @@ async function main() {
   if (oldFallback === undefined) delete process.env.ZHCN_REVIEW_FALLBACK_MODEL; else process.env.ZHCN_REVIEW_FALLBACK_MODEL = oldFallback;
   if (oldLast === undefined) delete process.env.ZHCN_REVIEW_LAST_MODEL; else process.env.ZHCN_REVIEW_LAST_MODEL = oldLast;
 
+  const { translateConsensus } = require(toolPath);
+  assert.equal(typeof translateConsensus, "function", "consensus pass is available");
   const { relatedMemory } = require(toolPath);
   assert.deepEqual(relatedMemory({ exact: new Map([["Bar animation", "状态条动画"], ["Unrelated", "无关"]]) }, [["Bar styles", "x"]]), [["Bar animation", "状态条动画"]]);
   const { requestOnce, requestBatch, readGlossary, retryable } = require(toolPath);

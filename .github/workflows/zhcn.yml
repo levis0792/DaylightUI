@@ -9,6 +9,14 @@ on:
         description: "Upstream main SHA to translate"
         required: false
         type: string
+      mode:
+        description: "translate (incremental) or consensus (full multi-model baseline)"
+        required: false
+        default: "translate"
+        type: choice
+        options:
+          - translate
+          - consensus
       trigger_note:
         description: "Run title marker used by the monitor to avoid duplicate runs"
         required: false
@@ -54,6 +62,9 @@ jobs:
       ZHCN_BATCH_SIZE: ${{ vars.ZHCN_BATCH_SIZE || '12' }}
       ZHCN_CONTEXT_LINES: ${{ vars.ZHCN_CONTEXT_LINES || '6' }}
       ZHCN_REVIEW: ${{ vars.ZHCN_REVIEW || 'true' }}
+      ZHCN_CONSENSUS_MODELS: ${{ vars.ZHCN_CONSENSUS_MODELS || 'deepseek-v4.1-flash,glm-5.3,hy4-preview-x' }}
+      ZHCN_JUDGE_MODEL: ${{ vars.ZHCN_JUDGE_MODEL || 'deepseek-v4-pro' }}
+      ZHCN_CONSENSUS_BATCH_SIZE: ${{ vars.ZHCN_CONSENSUS_BATCH_SIZE || '10' }}
       AI_RETRIES: ${{ vars.AI_RETRIES || '3' }}
       AI_RETRY_BASE_MS: ${{ vars.AI_RETRY_BASE_MS || '1500' }}
       AI_WORKFLOW_RETRIES: ${{ vars.AI_WORKFLOW_RETRIES || '3' }}
@@ -221,7 +232,9 @@ jobs:
           while [ "$attempt" -lt "$attempts" ]; do
             attempt=$((attempt + 1))
             echo "::group::AI translation attempt ${attempt}/${attempts}"
-            ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" translate 2>&1 | tee /tmp/zhcn-ai.log
+            command=translate
+            [ "${{ inputs.mode }}" = "consensus" ] && command=consensus
+            ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" "$command" 2>&1 | tee /tmp/zhcn-ai.log
             rc=${PIPESTATUS[0]}
             echo "::endgroup::"
             last_detail=$(tail -n 3 /tmp/zhcn-ai.log | tr "\n" " " | cut -c1-1000)
@@ -266,6 +279,15 @@ jobs:
         run: |
           set -euo pipefail
           API_KEY=test-key ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tests/test_zhcn_tool.js"
+
+      - name: Upload consensus checkpoint
+        if: always() && steps.changed.outputs.needed == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhcn-consensus-${{ github.run_id }}
+          path: ${{ runner.temp }}/zhcn-tools/tools/reports/zhcn-consensus.json
+          if-no-files-found: ignore
 
       - name: Upload translation review report
         if: steps.changed.outputs.needed == 'true'

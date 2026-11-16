@@ -568,6 +568,88 @@ async function translate() {
   }
 }
 
+// Full consensus pass: ask several models for the same source, then ask a
+// judge model to choose the best candidate. Progress is checkpointed so a
+// GitHub job timeout can resume on the next run instead of starting over.
+function consensusFile() {
+  return path.join(root, "tools", "reports", "zhcn-consensus.json");
+}
+
+function readConsensus() {
+  const file = consensusFile();
+  if (!fs.existsSync(file)) return { batches: {} };
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function writeConsensus(data) {
+  const file = consensusFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
+}
+
+async function translateConsensus() {
+  const { cat, entries } = report({ missingOnly: true });
+  const missing = [...cat.keys()].filter((k) => !entries.has(k));
+  if (!missing.length) {
+    console.log("Consensus pass: nothing missing.");
+    return;
+  }
+  const size = integerEnv("ZHCN_CONSENSUS_BATCH_SIZE", 10, 1);
+  const judge = process.env.ZHCN_JUDGE_MODEL || "deepseek-v4-pro";
+  const models = (process.env.ZHCN_CONSENSUS_MODELS || "deepseek-v4.1-flash,glm-5.3,hy4-preview-x")
+    .split(",").map((x) => x.trim()).filter(Boolean);
+  const state = readConsensus();
+  state.batches = state.batches || {};
+  const total = Math.ceil(missing.length / size);
+  for (let i = 0; i < missing.length; i += size) {
+    const keys = missing.slice(i, i + size);
+    const id = keys[0];
+    if (state.batches[id] && state.batches[id].complete) {
+      console.log(`Consensus batch ${i / size + 1}/${total}: already done.`);
+      continue;
+    }
+    const memory = translationMemory(entries);
+    const rows = keys.map((k) => [k, cat.get(k).refs.slice(0, 3).join(", "), nearbyContext(cat, k, cat.get(k).refs)]);
+    const candidates = {};
+    for (const model of models) {
+      console.log(`Consensus batch ${i / size + 1}/${total}: ${model}`);
+      try {
+        candidates[model] = await requestBatch(rows, memory, { model });
+      } catch (e) {
+        console.error(`Candidate ${model} failed: ${e.message || e}`);
+      }
+    }
+    if (!Object.keys(candidates).length) throw new Error("Every consensus candidate failed for this batch");
+    const data = JSON.stringify(candidates, null, 2);
+    const prompt = [
+      { role: "system", content: "You are the senior Simplified Chinese reviewer for a World of Warcraft addon. Pick or merge the best translation for each English key. Preserve every printf placeholder and color code exactly. Return only JSON mapping each English key to the final Chinese string." },
+      { role: "user", content: JSON.stringify({ candidates: JSON.parse(data) }, null, 2) },
+    ];
+    const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
+    if (!key) throw new Error("Repository secret API_KEY is not set");
+    const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
+    const res = await fetch(base + "/chat/completions", {
+      signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      body: JSON.stringify({ model: judge, messages: prompt }),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Judge ${judge} failed (${res.status}): ${text.slice(0, 1000)}`);
+    const parsed = JSON.parse(JSON.parse(text).choices[0].message.content);
+    for (const k of keys) {
+      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
+        throw new Error("Judge returned an invalid translation for " + JSON.stringify(k));
+      }
+    }
+    state.batches[id] = { complete: true, translations: parsed };
+    writeConsensus(state);
+  }
+  const final = {};
+  for (const batch of Object.values(state.batches)) Object.assign(final, batch.translations || {});
+  applyData(final, "multi-model consensus", { replace: true });
+  console.log(`Consensus pass wrote ${Object.keys(final).length} entries.`);
+}
 if (require.main === module) {
   const cmd = process.argv[2] || "check";
   if (cmd === "missing") report({ missingOnly: true });
@@ -580,10 +662,11 @@ if (require.main === module) {
   else if (cmd === "dedupe") dedupe();
   else if (cmd === "override") override(process.argv[3]);
   else if (cmd === "translate") translate().catch((e) => { console.error(e.stack || e); process.exit(1); });
+  else if (cmd === "consensus") translateConsensus().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else {
-    console.error("Usage: node tools/zhcn.js check|missing|translate|apply|merge|dedupe|override <json>");
+    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|apply|merge|dedupe|override <json>");
     process.exit(2);
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus };
