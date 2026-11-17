@@ -180,7 +180,7 @@ function report({ missingOnly = false } = {}) {
   const cat = catalog();
   const { entries, duplicates } = readLocale();
   const missing = [...cat.keys()].filter((k) => !entries.has(k));
-  const bad = [...entries].filter(([k, v]) => !v.trim() || !formatOk(k, v));
+  const bad = [...entries].filter(([k, v]) => !v.trim() || v.includes("\uFFFD") || !formatOk(k, v));
   const untranslatedValues = [...cat.keys()].filter((k) => entries.has(k) && englishLeftover(k, entries.get(k)));
   const english = untranslatedValues;
   console.log(`Current UI strings: ${cat.size}`);
@@ -206,7 +206,7 @@ function report({ missingOnly = false } = {}) {
 function applyData(data, label, opts = {}) {
   const { src, entries } = readLocale();
   const toApply = Object.entries(data).filter(([k]) => opts.replace || !entries.has(k));
-  const bad = toApply.filter(([k, v]) => typeof v !== "string" || !v.trim() || !formatOk(k, v));
+  const bad = toApply.filter(([k, v]) => typeof v !== "string" || !v.trim() || v.includes("\uFFFD") || !formatOk(k, v));
   if (bad.length) {
     console.error(`Refusing to apply ${bad.length} invalid entries:`);
     for (const [k, v] of bad.slice(0, 40)) console.error(`  ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
@@ -243,7 +243,7 @@ function baseline(file) {
   for (const key of cat.keys()) {
     if (!from.has(key)) continue;
     const value = from.get(key);
-    if (!value.trim() || !formatOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
+    if (!value.trim() || value.includes("\uFFFD") || !formatOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
     kept[key] = value;
   }
   const ordered = [...cat.keys()].filter((key) => Object.prototype.hasOwnProperty.call(kept, key)).sort();
@@ -339,7 +339,7 @@ function readGlossary() {
 }
 
 function retryable(error) {
-  return error && (error.retryable === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
+  return error && (error.retryable === true || error.timeout === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
 }
 
 function requestModel() {
@@ -422,15 +422,21 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
   ].join(' ');
   const requested = batch.map(([original_english, source_location, nearby_ui_text]) => ({ original_english, source_location, nearby_ui_text: nearby_ui_text || [] }));
   const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: requested }, null, 2);
-  const res = await fetchImpl(base + '/chat/completions', {
-    signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
+  let res;
+  try {
+    res = await fetchImpl(base + '/chat/completions', {
+      signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
     body: JSON.stringify({
       model,
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     }),
-  });
+    });
+  } catch (e) {
+    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) e.timeout = true;
+    throw e;
+  }
   const text = await res.text();
   if (!res.ok) {
     const error = new Error('AI request failed (' + res.status + '): ' + text.slice(0, 1000));
@@ -456,10 +462,10 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
         const content = data.choices[0].message.content.trim();
         parsed = { [batch[0][0]]: content };
       } catch (_) {
-        throw new Error('AI returned invalid JSON: ' + text.slice(0, 1000));
+        throw Object.assign(new Error('AI returned invalid JSON: ' + text.slice(0, 1000)), { outputError: true });
       }
     } else {
-      throw new Error('AI returned invalid JSON: ' + text.slice(0, 1000));
+      throw Object.assign(new Error('AI returned invalid JSON: ' + text.slice(0, 1000)), { outputError: true });
     }
   }
   const out = {};
@@ -469,9 +475,10 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
       const values = Object.values(parsed).filter((item) => typeof item === 'string' && item.trim());
       if (values.length === 1) v = values[0];
     }
-    if (typeof v !== 'string' || !v.trim()) throw new Error('AI omitted: ' + JSON.stringify(k) + '; returned keys: ' + JSON.stringify(Object.keys(parsed)));
-    if (!formatOk(k, v)) throw new Error('Placeholder mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v));
-    if (englishLeftover(k, v)) throw new Error('AI left the string in English: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v));
+    if (typeof v !== 'string' || !v.trim()) throw Object.assign(new Error('AI omitted: ' + JSON.stringify(k) + '; returned keys: ' + JSON.stringify(Object.keys(parsed))), { outputError: true });
+    if (v.includes('\uFFFD')) throw Object.assign(new Error('AI returned a replacement character: ' + JSON.stringify(k)), { outputError: true });
+    if (!formatOk(k, v)) throw Object.assign(new Error('Placeholder mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
+    if (englishLeftover(k, v)) throw Object.assign(new Error('AI left the string in English: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
     out[k] = v;
   }
   return out;
@@ -497,25 +504,27 @@ async function requestBatch(batch, memory, opts = {}) {
       return await requestOnce(batch, memory, fetchImpl, { review: opts.review === true, model: opts.model });
     } catch (e) {
       last = e;
+      if (e.outputError) break;
       const canRetry = retryable(e);
       const message = 'AI batch attempt ' + attempt + '/' + tries + ' failed: ' + (e.message || e);
       console.error(message);
-      console.log('::error::' + message)
+      console.log('::error::' + message);
       if (!canRetry || attempt === tries) break;
       const delay = Math.min(30000, integerEnv('AI_RETRY_BASE_MS', 1500, 0) * (2 ** (attempt - 1)));
       console.error('Retrying in ' + delay + 'ms');
       await wait(delay);
     }
   }
-  // A validation error (English left, placeholder mismatch, omitted key) is
-  // deterministic for a whole batch. Retry each string alone so one awkward
-  // line does not block every new string in the release.
-  if (last && !retryable(last) && batch.length > 1) {
+  // Model-output problems (malformed JSON, an omitted key, a placeholder error,
+  // an English sentence or a replacement character) can be isolated to one
+  // string. Split the batch once so one awkward line does not block the rest.
+  if (last && last.outputError && batch.length > 1) {
     console.error('Retrying the failed batch one string at a time.');
     const out = {};
     for (const row of batch) Object.assign(out, await requestBatch([row], memory, { ...opts, retries: tries, wait }));
     return out;
   }
+  if (last && last.outputError) throw last;
   if (last && !retryable(last)) throw last;
   throw new Error('AI batch failed after ' + tries + ' attempts: ' + (last && (last.message || last)));
 }
@@ -774,4 +783,6 @@ if (require.main === module) {
 }
 
 module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline };
+
+
 

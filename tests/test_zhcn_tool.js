@@ -77,6 +77,8 @@ async function main() {
   const baselineText = fs.readFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), "utf8");
   assert.match(baselineText, /L\["Keep"\] = "保留"/);
   assert.doesNotMatch(baselineText, /Gone/);
+  fs.writeFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), 'L["Keep"] = "\uFFFD"' + String.fromCharCode(10), "utf8");
+  assert.throws(() => baselined.baseline(path.join(baselineRoot, "Locales", "zhCN.lua")), /Invalid baseline translation/);
   delete process.env.ZHCN_ROOT;
   delete process.env.ZHCN_KEYS_FILE;
   fs.rmSync(baselineRoot, { recursive: true, force: true });
@@ -240,6 +242,40 @@ async function main() {
       },
     }), /failed after 2 attempts/);
     assert.equal(calls, 2);
+
+    calls = 0;
+    const splitWaits = [];
+    const split = await requestBatch([["One", "Some.lua:1"], ["Two", "Some.lua:2"]], { exact: new Map() }, {
+      retries: 2,
+      wait: async (ms) => { splitWaits.push(ms); },
+      fetchImpl: async (_url, options) => {
+        calls += 1;
+        const payload = JSON.parse(options.body);
+        const rows = JSON.parse(payload.messages[1].content).strings_to_translate;
+        if (rows.length > 1) return fakeResponse(200, completion(JSON.stringify({ One: "一", Two: "Two." })));
+        const key = rows[0].original_english;
+        return fakeResponse(200, completion(JSON.stringify({ [key]: key === "One" ? "一" : "二" })));
+      },
+    });
+    assert.deepEqual(split, { One: "一", Two: "二" });
+    assert.equal(calls, 3, "the bad batch is split into two single-key requests");
+    assert.deepEqual(splitWaits, [], "a deterministic model-output error is not retried with backoff");
+
+    calls = 0;
+    await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
+      retries: 3,
+      wait: async () => {},
+      fetchImpl: async () => { calls += 1; return fakeResponse(200, completion("not json")); },
+    }), /left the string in English|invalid JSON/);
+    assert.equal(calls, 1, "invalid model JSON is not retried with backoff");
+
+    calls = 0;
+    await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
+      retries: 3,
+      wait: async () => {},
+      fetchImpl: async () => { calls += 1; return fakeResponse(200, completion(JSON.stringify({ Ready: String.fromCharCode(0xFFFD) }))); },
+    }), /replacement character/);
+    assert.equal(calls, 1, "a replacement character never reaches the locale");
   } finally {
     if (oldKey === undefined) delete process.env.API_KEY; else process.env.API_KEY = oldKey;
     if (oldBase === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = oldBase;
