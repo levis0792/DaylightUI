@@ -60,6 +60,27 @@ async function main() {
   delete process.env.ZHCN_ROOT;
   fs.rmSync(dedupeRoot, { recursive: true, force: true });
   delete require.cache[require.resolve(toolPath)];
+  const baselineRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-baseline-"));
+  const baselineKeys = path.join(baselineRoot, "keys.txt");
+  fs.mkdirSync(path.join(baselineRoot, "Locales"), { recursive: true });
+  fs.writeFileSync(baselineKeys, ['Keep','New'].map((key) => JSON.stringify(key)).join("\n") + "\n", "utf8");
+  fs.writeFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), [
+    'L["Keep"] = "保留"',
+    'L["Gone"] = "删除"',
+    "",
+  ].join("\n"), "utf8");
+  process.env.ZHCN_ROOT = baselineRoot;
+  process.env.ZHCN_KEYS_FILE = baselineKeys;
+  delete require.cache[require.resolve(toolPath)];
+  const baselined = require(toolPath);
+  assert.equal(baselined.baseline(path.join(baselineRoot, "Locales", "zhCN.lua")), 1);
+  const baselineText = fs.readFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), "utf8");
+  assert.match(baselineText, /L\["Keep"\] = "保留"/);
+  assert.doesNotMatch(baselineText, /Gone/);
+  delete process.env.ZHCN_ROOT;
+  delete process.env.ZHCN_KEYS_FILE;
+  fs.rmSync(baselineRoot, { recursive: true, force: true });
+  delete require.cache[require.resolve(toolPath)];
   const { highRisk, batchSize, requestModel, reviewModel, reviewModels } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), false);
@@ -232,3 +253,4 @@ main().catch((error) => {
   console.error(error.stack || error);
   process.exit(1);
 });
+

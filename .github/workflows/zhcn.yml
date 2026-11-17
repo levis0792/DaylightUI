@@ -154,16 +154,17 @@ jobs:
 
           # Export keys from the author's just-checked-out source, not the fork's.
           luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
-          # Start from the author's own locale, so anything already merged stays
-          # as the author wrote it and nothing gets retranslated.
-          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" merge "${RUNNER_TEMP}/zhcn-fork.lua"
+          # The fork main branch is the reviewed baseline. Keep its wording for
+          # every key the author still ships, drop keys the author removed, and
+          # leave only genuinely new or reworded keys for the translation pass.
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" baseline "${RUNNER_TEMP}/zhcn-fork.lua"
           # Upstream can add a string that already exists; keep its last definition.
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" dedupe
           # Force the reviewed terms (spacing, fixed game words) over whatever the author or AI has.
           if [ -f "${RUNNER_TEMP}/zhcn-tools/tools/zhcn-overrides.json" ]; then
             ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" override "${RUNNER_TEMP}/zhcn-tools/tools/zhcn-overrides.json"
           fi
-          echo "Base: the author's locale plus only the entries it is missing."
+          echo "Base: the reviewed fork baseline, limited to the author current keys. New strings are translated below."
 
       - name: Scan current coverage
         if: steps.changed.outputs.needed == 'true'
@@ -178,7 +179,7 @@ jobs:
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
-          if [ "$code" -ne 0 ] && [ "$(grep -c '^Missing keys:\|^English leftovers:' /tmp/zhcn-check.txt)" -eq 0 ]; then
+          if [ "$code" -ne 0 ] && ! grep -q -E '^Untranslated: [1-9]|^Format/empty errors: [1-9]|^Duplicate keys: [1-9]' /tmp/zhcn-check.txt; then
             exit "$code"
           fi
 
@@ -400,3 +401,5 @@ jobs:
               echo "::notice::PR creation failed; the automation branch was still updated."
               exit 0
             }
+
+

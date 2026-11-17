@@ -47,7 +47,7 @@ const ALLOWED_ENGLISH = new Set([
   "PvP", "PvE", "RP", "DPS", "HPS", "NPC", "UI", "AFK", "AP", "AOE", "AoE",
   "GUID", "ID", "PVP", "PVE", "Daylight UI", "Daylight", "TW", "CN", "US", "EU",
   "CDM",
-  "Alt", "Ctrl", "Shift", "Esc",
+  "Alt", "Ctrl", "Shift", "Esc", "Delete", "DELETE",
   // AddOn and font names stay as published so players can find them.
   "Ace3", "Attune", "Baganator", "Bagnon", "BuffLedger", "Deadly Boss Mods",
   "Dewdrop", "OPie", "Plater", "Platynator", "PrettyTooltip", "Questie",
@@ -230,6 +230,33 @@ function applyData(data, label, opts = {}) {
   return toApply.length;
 }
 
+// Replace the locale with the reviewed baseline, restricted to the runtime
+// keys still shipped by upstream. This keeps the fork wording as the source
+// of truth while dropping strings the author removed and leaving newly added
+// strings for translate().
+function baseline(file) {
+  const source = path.resolve(root, file || "");
+  const from = parseLocaleFile(source);
+  if (!from.size) throw new Error("no locale entries in " + source);
+  const { cat } = report({ missingOnly: true });
+  const kept = {};
+  for (const key of cat.keys()) {
+    if (!from.has(key)) continue;
+    const value = from.get(key);
+    if (!value.trim() || !formatOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
+    kept[key] = value;
+  }
+  const ordered = [...cat.keys()].filter((key) => Object.prototype.hasOwnProperty.call(kept, key)).sort();
+  const text = "-- Simplified Chinese (zhCN). English text is the key (Locales/Locales.lua)." + String.fromCharCode(10) +
+    "local _, DUI = ..." + String.fromCharCode(10) +
+    "if DUI.LOCALE ~= \"zhCN\" then return end" + String.fromCharCode(10) +
+    "local L = DUI.L" + String.fromCharCode(10) + String.fromCharCode(10) +
+    "-- Reviewed DaylightUI zhCN baseline; keys the author removed are dropped here." + String.fromCharCode(10) +
+    ordered.map((key) => "L[" + luaQuote(key) + "] = " + luaQuote(kept[key])).join(String.fromCharCode(10)) + String.fromCharCode(10);
+  fs.writeFileSync(localePath, text, "utf8");
+  console.log("Baseline kept " + ordered.length + " of " + from.size + " entries; " + cat.size + " runtime keys.");
+  return ordered.length;
+}
 function parseLocaleFile(file) {
   const src = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
   const entries = new Map();
@@ -733,6 +760,7 @@ if (require.main === module) {
     if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length) process.exit(1);
   }
   else if (cmd === "apply") apply(process.argv[3]);
+  else if (cmd === "baseline") baseline(process.argv[3]);
   else if (cmd === "merge") merge(process.argv[3]);
   else if (cmd === "dedupe") dedupe();
   else if (cmd === "override") override(process.argv[3]);
@@ -740,9 +768,10 @@ if (require.main === module) {
   else if (cmd === "consensus") translateConsensus().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else if (cmd === "rebuild") rebuildAll().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else {
-    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|rebuild|apply|merge|dedupe|override <json>");
+    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|rebuild|apply|baseline <file>|merge|dedupe|override <json>");
     process.exit(2);
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline };
+
