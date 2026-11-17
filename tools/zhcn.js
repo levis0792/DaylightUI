@@ -230,32 +230,37 @@ function applyData(data, label, opts = {}) {
   return toApply.length;
 }
 
-// Replace the locale with the reviewed baseline, restricted to the runtime
-// keys still shipped by upstream. This keeps the fork wording as the source
-// of truth while dropping strings the author removed and leaving newly added
-// strings for translate().
+// Keep the author's locale exactly as written. Only keys the runtime now ships
+// and the current file is missing are appended at the end, in alphabetical
+// order, from the reviewed fork baseline. Existing order, comments and
+// translations are never rewritten.
 function baseline(file) {
   const source = path.resolve(root, file || "");
   const from = parseLocaleFile(source);
   if (!from.size) throw new Error("no locale entries in " + source);
   const { cat } = report({ missingOnly: true });
-  const kept = {};
+  const { src, entries } = readLocale();
+  for (const [key, value] of entries) {
+    if (!value.trim() || value.includes("\uFFFD") || !formatOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
+  }
+  const additions = [];
   for (const key of cat.keys()) {
-    if (!from.has(key)) continue;
+    if (entries.has(key) || !from.has(key)) continue;
     const value = from.get(key);
     if (!value.trim() || value.includes("\uFFFD") || !formatOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
-    kept[key] = value;
+    additions.push([key, value]);
   }
-  const ordered = [...cat.keys()].filter((key) => Object.prototype.hasOwnProperty.call(kept, key)).sort();
-  const text = "-- Simplified Chinese (zhCN). English text is the key (Locales/Locales.lua)." + String.fromCharCode(10) +
-    "local _, DUI = ..." + String.fromCharCode(10) +
-    "if DUI.LOCALE ~= \"zhCN\" then return end" + String.fromCharCode(10) +
-    "local L = DUI.L" + String.fromCharCode(10) + String.fromCharCode(10) +
-    "-- Reviewed DaylightUI zhCN baseline; keys the author removed are dropped here." + String.fromCharCode(10) +
-    ordered.map((key) => "L[" + luaQuote(key) + "] = " + luaQuote(kept[key])).join(String.fromCharCode(10)) + String.fromCharCode(10);
+  additions.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  if (!additions.length) {
+    console.log("Baseline adds no new entries; the author file is unchanged.");
+    return 0;
+  }
+  let text = src.replace(/\n?$/, "\n");
+  text += "\n-- New strings appended by the zhCN maintenance workflow; existing lines are unchanged.\n";
+  text += additions.map(([key, value]) => "L[" + luaQuote(key) + "] = " + luaQuote(value)).join("\n") + "\n";
   fs.writeFileSync(localePath, text, "utf8");
-  console.log("Baseline kept " + ordered.length + " of " + from.size + " entries; " + cat.size + " runtime keys.");
-  return ordered.length;
+  console.log("Baseline appended " + additions.length + " new entries; existing file kept byte-for-byte.");
+  return additions.length;
 }
 function parseLocaleFile(file) {
   const src = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");

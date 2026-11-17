@@ -66,17 +66,17 @@ async function main() {
   fs.writeFileSync(baselineKeys, ['Keep','New'].map((key) => JSON.stringify(key)).join("\n") + "\n", "utf8");
   fs.writeFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), [
     'L["Keep"] = "保留"',
-    'L["Gone"] = "删除"',
+    'L["New"] = "新增"',
     "",
   ].join("\n"), "utf8");
   process.env.ZHCN_ROOT = baselineRoot;
   process.env.ZHCN_KEYS_FILE = baselineKeys;
   delete require.cache[require.resolve(toolPath)];
   const baselined = require(toolPath);
-  assert.equal(baselined.baseline(path.join(baselineRoot, "Locales", "zhCN.lua")), 1);
+  assert.equal(baselined.baseline(path.join(baselineRoot, "Locales", "zhCN.lua")), 0);
   const baselineText = fs.readFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), "utf8");
   assert.match(baselineText, /L\["Keep"\] = "保留"/);
-  assert.doesNotMatch(baselineText, /Gone/);
+  assert.match(baselineText, /L\["New"\] = "新增"/);
   fs.writeFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), 'L["Keep"] = "\uFFFD"' + String.fromCharCode(10), "utf8");
   assert.throws(() => baselined.baseline(path.join(baselineRoot, "Locales", "zhCN.lua")), /Invalid baseline translation/);
   delete process.env.ZHCN_ROOT;
