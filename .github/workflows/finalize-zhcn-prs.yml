@@ -47,7 +47,7 @@ jobs:
 
           ### Validation
 
-          - 46 existing lines reworded; no keys added or removed.
+          - 50 existing lines reworded; no keys added or removed.
           - Placeholders and color codes preserved.
           - File order and comments preserved.
           - `git diff --check` passes.
@@ -83,7 +83,7 @@ jobs:
 
           Validation: +92 / -0 in \`Locales/zhCN.lua\`, with no duplicate or formatting errors.
 
-          The terminology and rewording review is in #${REWORD_NUMBER}.
+          The terminology and rewording review is separate and follows in its own PR.
           EOF
           jq -Rs --arg title "locale(zhCN): add missing 1.9.3 strings" '{title:$title,body:.}' "$body" > /tmp/pr71-patch.json
           gh api -X PATCH "repos/${UPSTREAM}/pulls/71" --input /tmp/pr71-patch.json >/dev/null
