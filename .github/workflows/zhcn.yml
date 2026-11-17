@@ -53,7 +53,7 @@ jobs:
     env:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
-      ZHCN_BRANCH: automation/zhcn
+      ZHCN_BRANCH: codex/zhcn-rewords-192
       ZHCN_STATE_BRANCH: automation/zhcn-state
       API_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
@@ -157,7 +157,7 @@ jobs:
           # The fork main branch is the reviewed baseline. Keep its wording for
           # every key the author still ships, drop keys the author removed, and
           # leave only genuinely new or reworded keys for the translation pass.
-          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" baseline "${RUNNER_TEMP}/zhcn-fork.lua"
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" sync "${RUNNER_TEMP}/zhcn-fork.lua"
           # Upstream can add a string that already exists; keep its last definition.
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" dedupe
           # Force the reviewed terms (spacing, fixed game words) over whatever the author or AI has.

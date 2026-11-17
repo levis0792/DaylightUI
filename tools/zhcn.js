@@ -283,6 +283,21 @@ function merge(file) {
   report();
 }
 
+// Apply the reviewed fork baseline to the author's current file. Existing
+// lines keep their order and comments; reviewed wording replaces only keys the
+// author still ships, and new runtime keys are appended. This is the rolling
+// PR mode used by the maintenance workflow.
+function sync(file) {
+  const source = path.resolve(root, file || "");
+  const from = parseLocaleFile(source);
+  if (!from.size) throw new Error("no locale entries in " + source);
+  const { cat } = report({ missingOnly: true });
+  const allowed = new Set(cat.keys());
+  const data = Object.fromEntries([...from].filter(([k]) => allowed.has(k)));
+  applyData(data, "synced " + path.basename(source), { replace: true });
+  report();
+}
+
 // Force reviewed values (for example fixed game terms) over upstream/AI ones.
 function override(file) {
   const data = JSON.parse(fs.readFileSync(path.resolve(root, file || ""), "utf8"));
@@ -775,6 +790,7 @@ if (require.main === module) {
   }
   else if (cmd === "apply") apply(process.argv[3]);
   else if (cmd === "baseline") baseline(process.argv[3]);
+  else if (cmd === "sync") sync(process.argv[3]);
   else if (cmd === "merge") merge(process.argv[3]);
   else if (cmd === "dedupe") dedupe();
   else if (cmd === "override") override(process.argv[3]);
@@ -782,12 +798,12 @@ if (require.main === module) {
   else if (cmd === "consensus") translateConsensus().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else if (cmd === "rebuild") rebuildAll().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else {
-    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|rebuild|apply|baseline <file>|merge|dedupe|override <json>");
+    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|rebuild|apply|baseline <file>|sync <file>|merge|dedupe|override <json>");
     process.exit(2);
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync };
 
 
 
