@@ -53,7 +53,7 @@ jobs:
     env:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
-      ZHCN_BRANCH: codex/zhcn-translation
+      ZHCN_BRANCH: automation/zhcn
       ZHCN_STATE_BRANCH: automation/zhcn-state
       API_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
@@ -356,50 +356,6 @@ jobs:
             exit 1
           }
 
-      - name: Ensure the pull request exists
+      - name: Leave the reviewed PR to the maintainer
         if: steps.changes.outputs.changed == 'true'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
-        shell: bash
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::notice::GH_PR_TOKEN is not configured. The automation branch was updated; the existing PR stays current through its branch."
-            exit 0
-          fi
-
-          existing=$(gh pr list \
-            --repo "${UPSTREAM_REPO}" \
-            --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
-            --state open \
-            --json number,url \
-            --jq '.[0].url // empty') || {
-              echo "::notice::Could not inspect the author PR; the automation branch was already updated."
-              exit 0
-            }
-
-          if [ -n "$existing" ]; then
-            echo "Existing PR updated by the branch push: ${existing}"
-            exit 0
-          fi
-
-          open_count=$(gh pr list --repo "${UPSTREAM_REPO}" --state open --limit 100 --json number --jq 'length') || {
-            echo "::notice::Could not count open PRs; the automation branch was already updated."
-            exit 0
-          }
-          if [ "$open_count" -ge 50 ]; then
-            echo "::notice::The author already has ${open_count} open PRs; skipping PR creation."
-            exit 0
-          fi
-
-          gh pr create \
-            --repo "${UPSTREAM_REPO}" \
-            --base main \
-            --head "${TARGET_REPO%%/*}:${ZHCN_BRANCH}" \
-            --title "locale(zhCN): automated Simplified Chinese update" \
-            --body "Automated zhCN update. Only Locales/zhCN.lua changes. Coverage, placeholders, English leftovers, and the generated locale were validated before push." || {
-              echo "::notice::PR creation failed; the automation branch was still updated."
-              exit 0
-            }
-
-
+        run: echo "The automation branch was updated. The reviewed PR is maintained separately."
