@@ -57,15 +57,15 @@ jobs:
       ZHCN_STATE_BRANCH: automation/zhcn-state
       API_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
-      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-v4.1-flash' }}
-      ZHCN_REVIEW_MODEL: ${{ vars.ZHCN_REVIEW_MODEL || 'glm-5.3' }}
-      ZHCN_REVIEW_FALLBACK_MODEL: ${{ vars.ZHCN_REVIEW_FALLBACK_MODEL || 'deepseek-v4-pro' }}
-      ZHCN_REVIEW_LAST_MODEL: ${{ vars.ZHCN_REVIEW_LAST_MODEL || 'hy4-preview-x' }}
+      OPENAI_MODEL: deepseek-v4.1-flash
+      ZHCN_REVIEW_MODEL: deepseek-v4.1-flash
+      ZHCN_REVIEW_FALLBACK_MODEL: deepseek-v4.1-flash
+      ZHCN_REVIEW_LAST_MODEL: deepseek-v4.1-flash
       ZHCN_BATCH_SIZE: ${{ vars.ZHCN_BATCH_SIZE || '12' }}
       ZHCN_CONTEXT_LINES: ${{ vars.ZHCN_CONTEXT_LINES || '6' }}
-      ZHCN_REVIEW: ${{ vars.ZHCN_REVIEW || 'true' }}
-      ZHCN_CONSENSUS_MODELS: ${{ vars.ZHCN_CONSENSUS_MODELS || 'deepseek-v4.1-flash,glm-5.3,hy4-preview-x' }}
-      ZHCN_JUDGE_MODEL: ${{ vars.ZHCN_JUDGE_MODEL || 'deepseek-v4-pro' }}
+      ZHCN_REVIEW: 'false'
+      ZHCN_CONSENSUS_MODELS: deepseek-v4.1-flash
+      ZHCN_JUDGE_MODEL: deepseek-v4.1-flash
       ZHCN_CONSENSUS_BATCH_SIZE: ${{ vars.ZHCN_CONSENSUS_BATCH_SIZE || '10' }}
       AI_RETRIES: ${{ vars.AI_RETRIES || '3' }}
       AI_RETRY_BASE_MS: ${{ vars.AI_RETRY_BASE_MS || '1500' }}
@@ -148,13 +148,13 @@ jobs:
         shell: bash
         run: |
           # Keep the fork's copy as the merge source before switching branches.
-          git show main:Locales/zhCN.lua > "${RUNNER_TEMP}/zhcn-fork.lua"
+          git show "origin/${ZHCN_BRANCH}:Locales/zhCN.lua" > "${RUNNER_TEMP}/zhcn-fork.lua" || git show main:Locales/zhCN.lua > "${RUNNER_TEMP}/zhcn-fork.lua"
           git switch -C "${ZHCN_BRANCH}" upstream/main
           test -f Locales/zhCN.lua
 
           # Export keys from the author's just-checked-out source, not the fork's.
           luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
-          # The fork main branch is the reviewed baseline. Keep its wording for
+          # The automation branch is the reviewed baseline. Keep its wording for
           # every key the author still ships, drop keys the author removed, and
           # leave only genuinely new or reworded keys for the translation pass.
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" sync "${RUNNER_TEMP}/zhcn-fork.lua"
@@ -164,7 +164,7 @@ jobs:
           if [ -f "${RUNNER_TEMP}/zhcn-tools/tools/zhcn-overrides.json" ]; then
             ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" override "${RUNNER_TEMP}/zhcn-tools/tools/zhcn-overrides.json"
           fi
-          echo "Base: the reviewed fork baseline, limited to the author current keys. New strings are translated below."
+          echo "Base: the reviewed automation baseline, limited to the author current keys. New strings are translated below."
 
       - name: Scan current coverage
         if: steps.changed.outputs.needed == 'true'
