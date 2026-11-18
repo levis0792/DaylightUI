@@ -14,4 +14,22 @@ function formatOk(key, value) {
   return a.every((x, i) => x === b[i]);
 }
 
-module.exports = { specifiers, formatOk };
+// Color and texture codes are not string.format holes, but a changed or
+// dropped code breaks the panel just as visibly. The author's own locale test
+// compares their counts; use the same contract here.
+function codeCounts(text) {
+  const s = String(text);
+  return {
+    color: (s.match(/\|c[0-9a-fA-F]{8}/g) || []).length,
+    reset: (s.match(/\|r/g) || []).length,
+    texture: (s.match(/\|T/g) || []).length,
+  };
+}
+
+function codesOk(key, value) {
+  const a = codeCounts(key);
+  const b = codeCounts(value);
+  return a.color === b.color && a.reset === b.reset && a.texture === b.texture;
+}
+
+module.exports = { specifiers, formatOk, codeCounts, codesOk };

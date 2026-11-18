@@ -32,6 +32,10 @@ jobs:
             exit 1
           }
 
+      - name: Run the author's own locale test
+        shell: bash
+        run: luajit tests/run.lua --par --only test_locale
+
       - name: Validate complete locale coverage
         shell: bash
         run: |

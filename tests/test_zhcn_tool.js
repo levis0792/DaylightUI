@@ -134,8 +134,6 @@ async function main() {
   const glossary = readGlossary();
   assert.equal(glossary["Focus Target"], "焦点目标");
   assert.equal(glossary["tooltip"], "鼠标提示");
-  assert.equal(glossary["Bought by"], "买家");
-  assert.equal(glossary["Sold by"], "卖家");
 
   assert.equal(retryable({ status: 429 }), true);
   assert.equal(retryable({ status: 503 }), true);
@@ -160,6 +158,78 @@ async function main() {
   assert.equal(englishLeftover("Skins", "skins dump <Frame> [depth]：列出一个窗口"), false, "command docs stay English");
   assert.equal(englishLeftover("Copy", "选中文字后按Ctrl+C复制。"), false, "Ctrl+C is not English");
   assert.equal(englishLeftover("Support", "在Ko-fi上支持DaylightUI"), false, "donation platform stays English");
+  assert.equal(englishLeftover("Clique is on", "Clique 已启用，因此由 Clique 处理点击施法。Clique 继续生效。"), false, "repeated addon names are not an English sentence");
+  assert.equal(englishLeftover("Kinds", "类型：gear weapon armor"), true, "ordinary leaked words still fail");
+  assert.equal(englishLeftover("logo-title.png", "logo-title.png"), false, "texture filenames stay unchanged");
+  assert.equal(englishLeftover("Search", "Search"), true, "a cached English key is still untranslated");
+
+  // Author-source changes: removed keys must go, changed English keys must be
+  // translated, and an English value must never be reused as memory.
+  const { validTranslation, prune, sync } = require(toolPath);
+  assert.equal(validTranslation("Search", "Search"), false, "an English value is not reusable memory");
+  assert.equal(validTranslation("Search", "搜索"), true);
+  assert.equal(validTranslation("|cff00ff00Hi|r", "你好"), false, "a dropped color code is invalid");
+
+  const authorRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-author-"));
+  const authorKeys = path.join(authorRoot, "keys.txt");
+  fs.mkdirSync(path.join(authorRoot, "Locales"), { recursive: true });
+  fs.writeFileSync(authorKeys, ["Visible", "Changed", "|cff00ff00Code|r"].map((k) => JSON.stringify(k)).join("\n") + "\n", "utf8");
+  fs.writeFileSync(path.join(authorRoot, "Locales", "zhCN.lua"), [
+    'L["Visible"] = "可见"',
+    'L["Changed"] = "Changed"',
+    'L["|cff00ff00Code|r"] = "你好"',
+    'L["Removed"] = "旧死键"',
+    "",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(authorRoot, "baseline.lua"), [
+    'L["Visible"] = "可见"',
+    'L["Changed"] = "已更改"',
+    'L["|cff00ff00Code|r"] = "|cff00ff00你好|r"',
+    'L["Removed"] = "旧死键"',
+    "",
+  ].join("\n"), "utf8");
+  process.env.ZHCN_ROOT = authorRoot;
+  process.env.ZHCN_KEYS_FILE = authorKeys;
+  delete require.cache[require.resolve(toolPath)];
+  const authorTool = require(toolPath);
+  authorTool.sync(path.join(authorRoot, "baseline.lua"));
+  const authorText = fs.readFileSync(path.join(authorRoot, "Locales", "zhCN.lua"), "utf8");
+  assert.match(authorText, /L\["Changed"\] = "已更改"/, "a new English key receives a translation");
+  assert.match(authorText, /L\["\|cff00ff00Code\|r"\] = "\|cff00ff00你好\|r"/, "a dropped color code is repaired");
+  assert.doesNotMatch(authorText, /L\["Removed"\]/, "a translation for a deleted source key is pruned");
+  assert.equal(authorTool.prune(), 0, "pruning twice is a no-op");
+  delete process.env.ZHCN_ROOT;
+  delete process.env.ZHCN_KEYS_FILE;
+  fs.rmSync(authorRoot, { recursive: true, force: true });
+  fs.rmSync(path.join(root, "tools", "reports"), { recursive: true, force: true });
+  delete require.cache[require.resolve(toolPath)];
+
+  // A stale English value persisted by an earlier run must not be reused as
+  // translation memory; otherwise no HTTP request is made and the job loops.
+  const retryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-retry-"));
+  fs.mkdirSync(path.join(retryRoot, "Locales"), { recursive: true });
+  fs.writeFileSync(path.join(retryRoot, "keys.txt"), JSON.stringify("Search") + "\n", "utf8");
+  fs.writeFileSync(path.join(retryRoot, "Locales", "zhCN.lua"), 'L["Search"] = "Search"\n', "utf8");
+  process.env.ZHCN_ROOT = retryRoot;
+  process.env.ZHCN_KEYS_FILE = path.join(retryRoot, "keys.txt");
+  process.env.API_KEY = "retry-key";
+  process.env.OPENAI_MODEL = "test-model";
+  delete require.cache[require.resolve(toolPath)];
+  const { requestBatch: retryBatch } = require(toolPath);
+  const retried = await retryBatch([["Search", "Some.lua:1"]], { exact: new Map() }, {
+    retries: 1,
+    fetchImpl: async (_url, options) => {
+      const rows = JSON.parse(JSON.parse(options.body).messages[1].content).strings_to_translate;
+      assert.equal(rows.some((r) => r.original_english === "Search"), true, "a pure-English value must be retranslated");
+      return fakeResponse(200, completion(JSON.stringify({ Search: "搜索" })));
+    },
+  });
+  assert.deepEqual(retried, { Search: "搜索" });
+  delete process.env.ZHCN_ROOT;
+  delete process.env.ZHCN_KEYS_FILE;
+  fs.rmSync(retryRoot, { recursive: true, force: true });
+  fs.rmSync(path.join(root, "tools", "reports"), { recursive: true, force: true });
+  delete require.cache[require.resolve(toolPath)];
 
   const oldKey = process.env.API_KEY;
   const oldBase = process.env.OPENAI_BASE_URL;

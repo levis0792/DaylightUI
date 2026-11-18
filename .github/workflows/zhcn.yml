@@ -160,6 +160,9 @@ jobs:
           # every key the author still ships, drop keys the author removed, and
           # leave only genuinely new or reworded keys for the translation pass.
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" sync "${RUNNER_TEMP}/zhcn-fork.lua"
+          # A translation whose English key was removed must go too. The
+          # author's own test_locale fails on such "no longer shown" rows.
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" prune
           # Upstream can add a string that already exists; keep its last definition.
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" dedupe
           # Force the reviewed terms (spacing, fixed game words) over whatever the author or AI has.
@@ -181,7 +184,7 @@ jobs:
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
-          if [ "$code" -ne 0 ] && ! grep -q -E '^Untranslated: [1-9]|^Format/empty errors: [1-9]|^Duplicate keys: [1-9]' /tmp/zhcn-check.txt; then
+          if [ "$code" -ne 0 ] && ! grep -q -E '^Untranslated: [1-9]|^Format/empty errors: [1-9]|^Duplicate keys: [1-9]|^Removed keys: [1-9]' /tmp/zhcn-check.txt; then
             exit "$code"
           fi
 
@@ -222,6 +225,7 @@ jobs:
           fi
 
       - name: Translate missing or untranslated strings
+        id: translate
         if: steps.scan.outputs.needed == 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
@@ -262,6 +266,10 @@ jobs:
             echo "::notice::Locale was left unchanged; the next scheduled or manual run will retry the same upstream commit."
             exit "$rc"
           fi
+          # translate() can have nothing to send while the scan still has a
+          # dead key or an invalid value. Those are deterministic failures, not
+          # AI outages; fail here instead of pushing a PR the author's tests reject.
+          ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
       - name: Upload AI translation output
         if: always() && steps.changed.outputs.needed == 'true'
@@ -273,10 +281,18 @@ jobs:
           if-no-files-found: ignore
 
       - name: Validate the author-facing file strictly
-        if: steps.changed.outputs.needed == 'true'
+        if: always() && steps.changed.outputs.needed == 'true' && steps.translate.outcome == 'success'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
         run: ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
+
+      - name: Run the author's own locale test
+        if: always() && steps.changed.outputs.needed == 'true'
+        shell: bash
+        run: |
+          # This is the author's gate for a locale-only PR: it catches keys the
+          # source no longer ships, holes/code mismatches, and loader errors.
+          luajit tests/run.lua --par --only test_locale
 
       - name: Test deduplication, routing and translator retry handling
         if: steps.changed.outputs.needed == 'true'

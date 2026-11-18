@@ -26,17 +26,36 @@ const toolRoot = process.env.ZHCN_TOOL_ROOT
   : defaultRoot;
 const { extract } = require(path.join(toolRoot, "tools", "lib", "catalog"));
 const { decodeShortString, luaQuote } = require(path.join(toolRoot, "tools", "lib", "lua"));
-const { formatOk, specifiers } = require(path.join(toolRoot, "tools", "lib", "format"));
+const { formatOk, specifiers, codesOk } = require(path.join(toolRoot, "tools", "lib", "format"));
+
+const LOCALE_LINE = /^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/;
+
+// One locale line, decoded with Lua's escaping rules. Keeping one parser means
+// check, sync, dedupe and apply cannot disagree about what the file contains.
+function localeLine(line) {
+  const m = line.match(LOCALE_LINE);
+  if (!m) return null;
+  try {
+    return { key: decodeShortString(m[1]), value: decodeShortString(m[2]) };
+  } catch (e) {
+    return null;
+  }
+}
+
+function validTranslation(key, value) {
+  if (typeof value !== "string" || !value.trim() || value.includes("\uFFFD")) return false;
+  if (!formatOk(key, value) || !codesOk(key, value)) return false;
+  return !englishLeftover(key, value);
+}
 
 function readLocale() {
   const src = fs.readFileSync(localePath, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
   const entries = new Map();
   const duplicates = [];
   for (const line of src.split("\n")) {
-    const m = line.match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
-    if (!m) continue;
-    const key = decodeShortString(m[1]);
-    const value = decodeShortString(m[2]);
+    const row = localeLine(line);
+    if (!row) continue;
+    const { key, value } = row;
     if (entries.has(key)) duplicates.push(key);
     else entries.set(key, value);
   }
@@ -47,6 +66,8 @@ const ALLOWED_ENGLISH = new Set([
   "PvP", "PvE", "RP", "DPS", "HPS", "NPC", "UI", "AFK", "AP", "AOE", "AoE",
   "GUID", "ID", "PVP", "PVE", "Daylight UI", "Daylight", "TW", "CN", "US", "EU",
   "CDM",
+  // Client terms and units that are correct and clearer in English.
+  "PTR", "Beta", "WoW", "XP", "HUD", "ms",
   "Alt", "Ctrl", "Shift", "Esc", "Delete", "DELETE",
   // AddOn and font names stay as published so players can find them.
   "Ace3", "Attune", "Baganator", "Bagnon", "BuffLedger", "Deadly Boss Mods",
@@ -58,6 +79,8 @@ const ALLOWED_ENGLISH = new Set([
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
   "Alfa Slab One", "Anton", "Archivo Black", "Audiowide", "Baloo 2", "Bangers", "Bebas Neue", "Big Shoulders", "Black Ops One", "Bowlby One", "Bungee", "Chakra Petch", "Changa One", "Chewy", "Cinzel", "Coiny", "Comfortaa", "Delius", "Dosis", "Fabled Class", "Fabled Core", "Fabled Dimension", "Fabled Myth", "Fabled Pixels", "Fabled Pixels v2", "Fabled Realm", "Fabled Realm v2", "Fabled Regalia", "Fizzle", "Fredoka", "Gluten", "Grandstander", "Itim", "Kanit Black Italic", "Lilita One", "Luckiest Guy", "M PLUS Rounded", "Mali", "MedievalSharp", "Metamorphous", "Nunito Black", "Orbitron", "Oswald", "Passion One", "Permanent Marker", "Pirata One", "Press Start 2P", "Quicksand", "Righteous", "Rubik", "Rubik Glitch", "Rubik Mono", "Sniglet", "Squada One", "Staatliches", "Teko", "Titan One", "Varela Round",
   "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul", "SkillUp", "SkillUp Forever",
+  // Real addon names that are allowed to appear untranslated in a Chinese sentence.
+  "Clique", "Bartender", "Blizzard", "ElvUI", "WeakAuras", "Details", "OmniCC", "Masque",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
 ]);
@@ -105,10 +128,18 @@ function stripCommandsAndCode(value) {
 
 function englishLeftover(key, value) {
   if (!value || !/[A-Za-z]/.test(value)) return false;
+  // Placeholder labels such as "G%d" and "%s x%d" have no prose. English
+  // letters inside a printf specifier are not an untranslated sentence.
+  if (/^[%A-Za-z0-9_+./ ()-]*$/.test(String(key)) && !String(key).replace(/%%|%(?:[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g, "").trim().match(/[A-Za-z]{2,}/)) return false;
   const stripped = stripCommandsAndCode(value);
   if (!stripped) return false;
   const words = stripped.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
   if (!words.length) return false;
+  // A cached value exactly equal to its English source is not a translation.
+  // Missing keys are handled separately. Bare permitted terms (PTR, PvP) are
+  // the exception: those are intentionally unchanged labels.
+  const exactKey = String(value).trim() === String(key).trim();
+  if (exactKey && !/^[\w.-]+\.(?:png|tga|blp|ttf|otf)$/i.test(String(value).trim()) && !/^[A-Za-z0-9]+ PvP$/.test(String(value).trim()) && !ALLOWED_ENGLISH.has(String(value).trim())) return true;
   if (ALLOWED_ENGLISH.has(String(value).trim())) return false;
   if (String(key).startsWith("Daylight UI: ") && String(value).startsWith("Daylight UI")) return false;
   if (words.every((w) => ALLOWED_ENGLISH.has(w))) return false;
@@ -116,30 +147,48 @@ function englishLeftover(key, value) {
   if (String(key).startsWith("/") || String(value).startsWith("/")) return false;
   if (/^Daylight UI\s*:/i.test(String(value))) return false;
   if (/^[\w.-]+\.(?:png|tga|blp|ttf|otf)$/i.test(String(value))) return false;
+  if (/^[A-Za-z0-9]+ PvP$/.test(String(value))) return false;
   if (/^skins profile\b/i.test(String(value))) return false;
   if (/^skins\s+[a-z]/i.test(String(value))) return false;
+  if (/^(?:BFD|RFC|VC|DM|WC|SFK|RFK|ULD|ZF|ST|Mara|BRD|LBRS|UBRS|DME|DMN|DMW|Scholo|Strat|Live|UD|BRS|MC|BWL|AQ20|AQ40|NAXX|PSI|SSC|TK|BH|BT|SWP)$/i.test(String(value))) return false;
   // A value with Chinese must not still contain English. Two checks:
   // 1) three or more ordinary English words in a row means an untranslated
   //    sentence such as "types: gear, weapon, armor";
   // 2) a single UI action word such as "Open" or "Save" is never allowed.
   if (hasHan(value)) {
+    // The search grammar is deliberately documented in English. Its words
+    // are keywords, not an untranslated sentence; ordinary prose still fails.
     const isOrdinary = (w) =>
       !ALLOWED_ENGLISH.has(w) &&
       !MIXED_ASCII_WORDS.has(w.toLowerCase()) &&
       !UI_ACTION_WORDS.has(w.toLowerCase());
+    const isKeywordPage = /\b(?:q>|ilvl>|boe\s*&|gear\s*,)/i.test(String(key));
+    // A sentence with Chinese is translated even when product names repeat:
+    // "Clique 已启用。Clique 继续..." must not look like an English run.
+    const isBoundary = (w) => !isOrdinary(w);
     // Count only pure-ASCII tokens. "Calm 小而缓慢" is one Han-mixed
     // token, not English; a real leak is several English words in a row,
     // like "gear, weapon, armor".
     const ascii = words.filter((w) => !hasHan(w));
+    // Three English-looking names in a translated sentence are usually
+    // brands repeated around Chinese, not a leaked English clause. A single
+    // UI action (Open/Save) is still rejected below.
+    // Repeated product names around Chinese are not a leaked English clause.
+    if (ascii.length && words.some((w) => hasHan(w)) && ascii.every((w) => ALLOWED_ENGLISH.has(w) || MIXED_ASCII_WORDS.has(w.toLowerCase()))) return false;
     let run = 0;
     let longest = 0;
     for (const w of ascii) {
-      run = isOrdinary(w) ? run + 1 : 0;
+      run = isOrdinary(w) && !isBoundary(w) ? run + 1 : 0;
       if (run > longest) longest = run;
     }
-    if (longest >= 3) return true;
-    return words.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()));
+    if (longest >= 3 && !isKeywordPage) return true;
+    return words.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w));
   }
+  // An all-English value is never a translation unless it is one of the
+  // explicit product/command exceptions above. Treating a value equal to its
+  // key as reusable memory made one English leftover fail every scheduled run.
+  // All-English values are checked as a whole. A filename or a pure brand
+  // value is handled by the explicit exceptions above.
   return words.some((w) => w.length >= 2);
 }
 
@@ -157,18 +206,13 @@ function dedupe() {
   const lines = src.split("\n");
   const last = new Map();
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
-    if (!m) continue;
-    try { last.set(decodeShortString(m[1]), i); } catch (e) {}
+    const row = localeLine(lines[i]);
+    if (row) last.set(row.key, i);
   }
   const out = [];
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
-    if (m) {
-      try {
-        if (last.get(decodeShortString(m[1])) !== i) continue;
-      } catch (e) {}
-    }
+    const row = localeLine(lines[i]);
+    if (row && last.get(row.key) !== i) continue;
     out.push(lines[i]);
   }
   fs.writeFileSync(localePath, out.join("\n"), "utf8");
@@ -180,12 +224,14 @@ function report({ missingOnly = false } = {}) {
   const cat = catalog();
   const { entries, duplicates } = readLocale();
   const missing = [...cat.keys()].filter((k) => !entries.has(k));
-  const bad = [...entries].filter(([k, v]) => !v.trim() || v.includes("\uFFFD") || !formatOk(k, v));
+  const stale = [...entries.keys()].filter((k) => !cat.has(k));
+  const bad = [...entries].filter(([k, v]) => !v.trim() || v.includes("\uFFFD") || !formatOk(k, v) || !codesOk(k, v));
   const untranslatedValues = [...cat.keys()].filter((k) => entries.has(k) && englishLeftover(k, entries.get(k)));
   const english = untranslatedValues;
   console.log(`Current UI strings: ${cat.size}`);
   console.log(`zhCN entries: ${entries.size}`);
   console.log(`Missing keys: ${missing.length}`);
+  console.log(`Removed keys: ${stale.length}`);
   console.log(`Untranslated: ${missing.length + english.length}`);
   console.log(`English leftovers: ${english.length}`);
   console.log(`Duplicate keys: ${duplicates.length}`);
@@ -194,19 +240,41 @@ function report({ missingOnly = false } = {}) {
   if (bad.length) for (const [k, v] of bad.slice(0, 80)) console.log(`  invalid ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
   if (english.length && !missingOnly) for (const k of english) console.log(`  english ${JSON.stringify(k)} -> ${JSON.stringify(entries.get(k))}`);
   if (missing.length && !missingOnly) for (const k of missing) console.log(`  missing ${JSON.stringify(k)}`);
+  if (stale.length && !missingOnly && stale.length <= 80) for (const k of stale) console.log(`  removed ${JSON.stringify(k)}`);
   if (missing.length) {
     const out = path.join(root, "tools", "reports", "zhcn-missing.tsv");
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, missing.map((k) => `${JSON.stringify(k)}\t${cat.get(k).refs.join(",")}`).join("\n") + "\n", "utf8");
     console.log(`Report: ${path.relative(root, out)}`);
   }
-  return { cat, entries, duplicates, missing, bad, english };
+  return { cat, entries, duplicates, missing, stale, bad, english };
+}
+
+// Remove translations whose English key the author no longer ships. This is
+// the one operation that must delete lines from the author's file; everything
+// else is append/replace so comments and order stay intact.
+function prune() {
+  const cat = catalog();
+  const { src } = readLocale();
+  const out = [];
+  let removed = 0;
+  for (const line of src.split("\n")) {
+    const row = localeLine(line);
+    if (row && !cat.has(row.key)) {
+      removed++;
+      continue;
+    }
+    out.push(line);
+  }
+  if (removed) fs.writeFileSync(localePath, out.join("\n"), "utf8");
+  console.log(`Removed ${removed} locale entr${removed === 1 ? "y" : "ies"} no longer in the author's source.`);
+  return removed;
 }
 
 function applyData(data, label, opts = {}) {
   const { src, entries } = readLocale();
   const toApply = Object.entries(data).filter(([k]) => opts.replace || !entries.has(k));
-  const bad = toApply.filter(([k, v]) => typeof v !== "string" || !v.trim() || v.includes("\uFFFD") || !formatOk(k, v));
+  const bad = toApply.filter(([k, v]) => typeof v !== "string" || !v.trim() || v.includes("\uFFFD") || !formatOk(k, v) || !codesOk(k, v));
   if (bad.length) {
     console.error(`Refusing to apply ${bad.length} invalid entries:`);
     for (const [k, v] of bad.slice(0, 40)) console.error(`  ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
@@ -241,13 +309,13 @@ function baseline(file) {
   const { cat } = report({ missingOnly: true });
   const { src, entries } = readLocale();
   for (const [key, value] of entries) {
-    if (!value.trim() || value.includes("\uFFFD") || !formatOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
+    if (!value.trim() || value.includes("\uFFFD") || !formatOk(key, value) || !codesOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
   }
   const additions = [];
   for (const key of cat.keys()) {
     if (entries.has(key) || !from.has(key)) continue;
     const value = from.get(key);
-    if (!value.trim() || value.includes("\uFFFD") || !formatOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
+    if (!value.trim() || value.includes("\uFFFD") || !formatOk(key, value) || !codesOk(key, value)) throw new Error("Invalid baseline translation for " + JSON.stringify(key));
     additions.push([key, value]);
   }
   additions.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
@@ -266,9 +334,8 @@ function parseLocaleFile(file) {
   const src = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
   const entries = new Map();
   for (const line of src.split("\n")) {
-    const m = line.match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
-    if (!m) continue;
-    try { entries.set(decodeShortString(m[1]), decodeShortString(m[2])); } catch (e) {}
+    const row = localeLine(line);
+    if (row) entries.set(row.key, row.value);
   }
   return entries;
 }
@@ -283,17 +350,23 @@ function merge(file) {
   report();
 }
 
-// Add reviewed values only for keys missing from the author-copy. Existing
-// lines keep their order, comments and wording byte-for-byte; new keys are
-// appended. This is the append-only mode used by the maintenance workflow.
+// Bring the reviewed baseline into the author's current file. Exact source
+// keys win; baseline fills missing keys and repairs empty, malformed, stale
+// English values. There is no case-insensitive matching: the game looks up the
+// exact Lua string, so "search" does not satisfy "Search".
 function sync(file) {
   const source = path.resolve(root, file || "");
   const from = parseLocaleFile(source);
   if (!from.size) throw new Error("no locale entries in " + source);
-  const { cat } = report({ missingOnly: true });
+  const { cat, entries } = report({ missingOnly: true });
   const allowed = new Set(cat.keys());
-  const data = Object.fromEntries([...from].filter(([k]) => allowed.has(k)));
-  applyData(data, "synced " + path.basename(source));
+  const data = {};
+  for (const [key, baseline] of from) {
+    if (!allowed.has(key)) continue;
+    if (!validTranslation(key, entries.get(key))) data[key] = baseline;
+  }
+  applyData(data, "synced " + path.basename(source), { replace: true });
+  prune();
   report();
 }
 
@@ -500,6 +573,7 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
     if (typeof v !== 'string' || !v.trim()) throw Object.assign(new Error('AI omitted: ' + JSON.stringify(k) + '; returned keys: ' + JSON.stringify(Object.keys(parsed))), { outputError: true });
     if (v.includes('\uFFFD')) throw Object.assign(new Error('AI returned a replacement character: ' + JSON.stringify(k)), { outputError: true });
     if (!formatOk(k, v)) throw Object.assign(new Error('Placeholder mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
+    if (!codesOk(k, v)) throw Object.assign(new Error('Color/texture code mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
     if (englishLeftover(k, v)) throw Object.assign(new Error('AI left the string in English: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
     out[k] = v;
   }
@@ -562,7 +636,9 @@ async function translate() {
   const result = {};
   for (const k of missing) {
     const hit = memory.approx.get(normal(k));
-    if (hit) result[k] = hit;
+    // Never reuse an English value (including the key itself) as a translation.
+    // Otherwise translate() calls no model at all and fails every scheduled run.
+    if (hit && validTranslation(k, hit)) result[k] = hit;
   }
   const remaining = missing.filter((k) => !(k in result));
   console.log(`Translation memory reused: ${missing.length - remaining.length}`);
@@ -620,8 +696,8 @@ async function translate() {
   // untouched, so a retry always starts from a clean base.
   applyData(result, "AI translation", { replace: true });
   const after = report();
-  if (after.missing.length || after.english.length) {
-    console.error(`Translation incomplete: ${after.missing.length} missing, ${after.english.length} English leftovers.`);
+  if (after.missing.length || after.english.length || after.bad.length || after.stale.length) {
+    console.error(`Translation incomplete: ${after.missing.length} missing, ${after.english.length} English leftovers, ${after.bad.length} invalid, ${after.stale.length} removed.`);
     process.exit(1);
   }
 }
@@ -696,16 +772,22 @@ async function translateConsensus() {
     if (!res.ok) throw new Error(`Judge ${judge} failed (${res.status}): ${text.slice(0, 1000)}`);
     const parsed = JSON.parse(JSON.parse(text).choices[0].message.content);
     for (const k of keys) {
-      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
+      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || !codesOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
         throw new Error("Judge returned an invalid translation for " + JSON.stringify(k));
       }
     }
     state.batches[id] = { complete: true, translations: parsed };
     writeConsensus(state);
   }
+  const allowed = new Set(cat.keys());
   const final = {};
-  for (const batch of Object.values(state.batches)) Object.assign(final, batch.translations || {});
+  for (const batch of Object.values(state.batches)) {
+    for (const [key, value] of Object.entries(batch.translations || {})) {
+      if (allowed.has(key)) final[key] = value;
+    }
+  }
   applyData(final, "multi-model consensus", { replace: true });
+  prune();
   console.log(`Consensus pass wrote ${Object.keys(final).length} entries.`);
 }
 function consensusAllFile() {
@@ -769,15 +851,20 @@ async function rebuildAll() {
     if (!res.ok) throw new Error(`Judge ${judge} failed (${res.status}): ${text.slice(0, 1000)}`);
     const parsed = JSON.parse(JSON.parse(text).choices[0].message.content);
     for (const k of batchKeys) {
-      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
+      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || !codesOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
         throw new Error("Judge returned an invalid translation for " + JSON.stringify(k));
       }
     }
     state.batches[id] = { complete: true, translations: parsed };
     writeConsensusAll(state);
   }
+  const allowed = new Set(cat.keys());
   const final = {};
-  for (const batch of Object.values(state.batches)) Object.assign(final, batch.translations || {});
+  for (const batch of Object.values(state.batches)) {
+    for (const [key, value] of Object.entries(batch.translations || {})) {
+      if (allowed.has(key)) final[key] = value;
+    }
+  }
   console.log(`Rebuild finished with ${Object.keys(final).length} entries.`);
   const ordered = Object.keys(final).sort().map((k) => `L[${luaQuote(k)}] = ${luaQuote(final[k])}`);
   fs.writeFileSync(localePath, "-- Simplified Chinese (zhCN).\nlocal _, DUI = ...\nif DUI.LOCALE ~= \"zhCN\" then return end\nlocal L = DUI.L\n\n" + ordered.join("\n") + "\n", "utf8");
@@ -788,11 +875,12 @@ if (require.main === module) {
   if (cmd === "missing") report({ missingOnly: true });
   else if (cmd === "check") {
     const result = report();
-    if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length) process.exit(1);
+    if (result.missing.length || result.english.length || result.bad.length || result.duplicates.length || result.stale.length) process.exit(1);
   }
   else if (cmd === "apply") apply(process.argv[3]);
   else if (cmd === "baseline") baseline(process.argv[3]);
   else if (cmd === "sync") sync(process.argv[3]);
+  else if (cmd === "prune") prune();
   else if (cmd === "merge") merge(process.argv[3]);
   else if (cmd === "dedupe") dedupe();
   else if (cmd === "override") override(process.argv[3]);
@@ -800,12 +888,12 @@ if (require.main === module) {
   else if (cmd === "consensus") translateConsensus().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else if (cmd === "rebuild") rebuildAll().catch((e) => { console.error(e.stack || e); process.exit(1); });
   else {
-    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|rebuild|apply|baseline <file>|sync <file>|merge|dedupe|override <json>");
+    console.error("Usage: node tools/zhcn.js check|missing|translate|consensus|rebuild|apply|baseline <file>|sync <file>|prune|merge|dedupe|override <json>");
     process.exit(2);
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation };
 
 
 
