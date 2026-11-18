@@ -40,6 +40,13 @@ async function withServer(handler, fn) {
 async function main() {
   assert.equal(spawnSync(process.execPath, ["--check", toolPath], { encoding: "utf8" }).status, 0,
     "tools/zhcn.js must parse");
+  const luaStrings = require(path.join(root, "tools", "lib", "lua"));
+  const escapedLua = "L[\"Its name in the AddOns list should read \\\"%s %s\\\": every plugin\\'s does.\"] = \"它在插件列表中的名称应为“%s %s”：每个插件都是如此。\"";
+  const localeLine = /^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/;
+  const m = escapedLua.match(localeLine);
+  assert.ok(m, "the regression fixture must stay a quoted locale entry");
+  assert.throws(() => JSON.parse(m[1]), /Bad escaped character/, "JSON.parse must reject the Lua escaped apostrophe");
+  assert.equal(luaStrings.decodeShortString(m[1]), "Its name in the AddOns list should read \"%s %s\": every plugin's does.");
   const os = require("node:os");
   const dedupeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-dedupe-"));
   fs.mkdirSync(path.join(dedupeRoot, "Locales"), { recursive: true });

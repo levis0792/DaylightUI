@@ -25,7 +25,7 @@ const toolRoot = process.env.ZHCN_TOOL_ROOT
   ? path.resolve(process.env.ZHCN_TOOL_ROOT)
   : defaultRoot;
 const { extract } = require(path.join(toolRoot, "tools", "lib", "catalog"));
-const { luaQuote } = require(path.join(toolRoot, "tools", "lib", "lua"));
+const { decodeShortString, luaQuote } = require(path.join(toolRoot, "tools", "lib", "lua"));
 const { formatOk, specifiers } = require(path.join(toolRoot, "tools", "lib", "format"));
 
 function readLocale() {
@@ -35,8 +35,8 @@ function readLocale() {
   for (const line of src.split("\n")) {
     const m = line.match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
     if (!m) continue;
-    const key = JSON.parse(m[1]);
-    const value = JSON.parse(m[2]);
+    const key = decodeShortString(m[1]);
+    const value = decodeShortString(m[2]);
     if (entries.has(key)) duplicates.push(key);
     else entries.set(key, value);
   }
@@ -159,14 +159,14 @@ function dedupe() {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
     if (!m) continue;
-    try { last.set(JSON.parse(m[1]), i); } catch (e) {}
+    try { last.set(decodeShortString(m[1]), i); } catch (e) {}
   }
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
     if (m) {
       try {
-        if (last.get(JSON.parse(m[1])) !== i) continue;
+        if (last.get(decodeShortString(m[1])) !== i) continue;
       } catch (e) {}
     }
     out.push(lines[i]);
@@ -268,7 +268,7 @@ function parseLocaleFile(file) {
   for (const line of src.split("\n")) {
     const m = line.match(/^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/);
     if (!m) continue;
-    try { entries.set(JSON.parse(m[1]), JSON.parse(m[2])); } catch (e) {}
+    try { entries.set(decodeShortString(m[1]), decodeShortString(m[2])); } catch (e) {}
   }
   return entries;
 }
