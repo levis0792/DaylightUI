@@ -1,9 +1,10 @@
 name: Update zhCN translation
 
 on:
-  # rerun marker: test file staged (fa38e8f fix)
-  # Triggered every 30 minutes by the NAS. GitHub's own cron is unreliable on
-  # forks, so the schedule block was removed on purpose.
+  # GitHub schedules are best effort. The NAS is an optional extra trigger;
+  # the state branch and concurrency group make duplicate triggers harmless.
+  schedule:
+    - cron: "17 */2 * * *"
   workflow_dispatch:
     inputs:
       upstream_sha:
@@ -40,6 +41,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: zhcn-translation
@@ -257,7 +259,7 @@ jobs:
           done
           if [ "$rc" -ne 0 ]; then
             echo "::error::AI translation failed after ${attempts} workflow attempts: ${last_detail}"
-            echo "::notice::Locale was left unchanged; the next NAS poll or a push to tools/zhcn.js will retry the same upstream commit."
+            echo "::notice::Locale was left unchanged; the next scheduled or manual run will retry the same upstream commit."
             exit "$rc"
           fi
 
@@ -356,6 +358,51 @@ jobs:
             exit 1
           }
 
-      - name: Leave the reviewed PR to the maintainer
+      - name: Create or update the upstream pull request
         if: steps.changes.outputs.changed == 'true'
-        run: echo "The automation branch was updated. The reviewed PR is maintained separately."
+        id: pull
+        env:
+          UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_PR_TOKEN is not configured. It needs repo access to open a PR in ${UPSTREAM_REPO}."
+            exit 1
+          fi
+
+          head="${GITHUB_REPOSITORY_OWNER}:${ZHCN_BRANCH}"
+          title="locale(zhCN): rolling translation update"
+          body=$(cat <<EOF
+          ## Simplified Chinese translation update
+
+          Automated incremental update for `${UPSTREAM_REPO}@${UPSTREAM_SHORT}`.
+
+          - Only `Locales/zhCN.lua` changes.
+          - Existing reviewed translations are reused; only new or untranslated strings are sent to `deepseek-v4.1-flash`.
+          - Required glossary and reviewed overrides are applied.
+          - Validation: missing 0, untranslated 0, duplicate keys 0, format/empty errors 0.
+          - No Lua logic, layout, or non-locale files change.
+
+          The bot never merges. Maintainers can review and merge this PR.
+          EOF
+          )
+
+          number=$(gh api "repos/${UPSTREAM_REPO}/pulls?state=open&head=${head}" --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            number=$(gh api --method POST "repos/${UPSTREAM_REPO}/pulls" \
+              -f title="$title" \
+              -f head="$head" \
+              -f base="main" \
+              -f body="$body" \
+              --jq '.number')
+            echo "Opened pull request #${number}."
+          else
+            gh api --method PATCH "repos/${UPSTREAM_REPO}/pulls/${number}" \
+              -f title="$title" \
+              -f body="$body" >/dev/null
+            echo "Updated pull request #${number}."
+          fi
+          echo "https://github.com/${UPSTREAM_REPO}/pull/${number}"
+          echo "url=https://github.com/${UPSTREAM_REPO}/pull/${number}" >> "$GITHUB_OUTPUT"
