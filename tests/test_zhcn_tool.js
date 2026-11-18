@@ -134,6 +134,8 @@ async function main() {
   const glossary = readGlossary();
   assert.equal(glossary["Focus Target"], "焦点目标");
   assert.equal(glossary["tooltip"], "鼠标提示");
+  assert.equal(glossary["Bought by"], "买家");
+  assert.equal(glossary["Sold by"], "卖家");
 
   assert.equal(retryable({ status: 429 }), true);
   assert.equal(retryable({ status: 503 }), true);
