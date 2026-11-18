@@ -397,20 +397,12 @@ jobs:
             exit 1
           }
 
-      - name: Create or update the upstream pull request
+      - name: Prepare the upstream pull request description
         if: steps.changes.outputs.changed == 'true'
-        id: pull
-        env:
-          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+        id: description
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::GH_PR_TOKEN is not configured. It needs repo access to open a PR in ${UPSTREAM_REPO}."
-            exit 1
-          fi
-
-          head="${GITHUB_REPOSITORY_OWNER}:${ZHCN_BRANCH}"
           base="main"
           UPSTREAM_SHORT=$(git -C "${GITHUB_WORKSPACE}" rev-parse --short upstream/main)
           test -n "$UPSTREAM_SHORT" || { echo "::error::Upstream short SHA is empty."; exit 1; }
@@ -429,31 +421,45 @@ jobs:
 
           validation=$(awk '/^(Missing keys|Untranslated|Duplicate keys|Format\/empty errors):/ {gsub(": ", " "); printf "%s; ", $0}' /tmp/zhcn-final.txt | sed 's/; $//')
 
-          body=$(cat <<EOF
-          ## Simplified Chinese translation update
+          {
+            echo "## Simplified Chinese translation update"
+            echo
+            echo "Update the Simplified Chinese locale for upstream commit \`${UPSTREAM_SHORT}\`."
+            echo
+            printf '%s\n' "${summary:-No translation entries changed.}"
+            echo
+            echo "**Validation:** ${validation:-passed}"
+            echo
+            echo "Only \`${LOCALE_PATH}\` changes. No Lua logic, layouts, or non-locale files are changed."
+          } > "${RUNNER_TEMP}/zhcn-pr-body.md"
+          test -s "${RUNNER_TEMP}/zhcn-pr-body.md"
+          grep -Fq "${UPSTREAM_SHORT}" "${RUNNER_TEMP}/zhcn-pr-body.md"
+          grep -Fq "${LOCALE_PATH}" "${RUNNER_TEMP}/zhcn-pr-body.md"
 
-          Update the Simplified Chinese locale for upstream commit `${UPSTREAM_SHORT}`.
-
-          ${summary:-No translation entries changed.}
-
-          **Validation:** ${validation:-passed}
-
-          Only `${LOCALE_PATH}` changes. No Lua logic, layouts, or non-locale files are changed.
-          EOF
-          )
+      - name: Create or update the upstream pull request
+        if: steps.changes.outputs.changed == 'true'
+        id: pull
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/zhcn-pr-body.md" || { echo "::error::Prepared PR body is missing."; exit 1; }
+          head="${GITHUB_REPOSITORY_OWNER}:${ZHCN_BRANCH}"
+          title="locale(zhCN): update Simplified Chinese translations"
           number=$(gh api "repos/${UPSTREAM_REPO}/pulls?state=open&head=${head}" --jq '.[0].number // empty')
           if [ -z "$number" ]; then
             number=$(gh api --method POST "repos/${UPSTREAM_REPO}/pulls" \
               -f title="$title" \
               -f head="$head" \
               -f base="main" \
-              -f body="$body" \
+              -F body=@"$RUNNER_TEMP/zhcn-pr-body.md" \
               --jq '.number')
             echo "Opened pull request #${number}."
           else
             gh api --method PATCH "repos/${UPSTREAM_REPO}/pulls/${number}" \
               -f title="$title" \
-              -f body="$body" >/dev/null
+              -F body=@"$RUNNER_TEMP/zhcn-pr-body.md" >/dev/null
             echo "Updated pull request #${number}."
           fi
           echo "https://github.com/${UPSTREAM_REPO}/pull/${number}"
