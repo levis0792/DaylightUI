@@ -40,22 +40,36 @@ console.log(`Added ${created.length}, updated ${modified.length}.`);
 if (otherLines) console.log(`Other changed lines: ${otherLines}.`);
 if (!created.length && !modified.length) process.exit(0);
 
+function compact(items, limit) {
+  const parts = items.slice(0, limit).map(([key, value]) => `${cell(key)} → ${cell(value)}`);
+  if (items.length > limit) parts.push(`...and ${items.length - limit} more`);
+  return parts.map((x) => `- ${x}`).join("\n");
+}
+
 console.log("");
 if (created.length) {
-  console.log(`### New translations (${created.length})`);
+  console.log(`**New translations (${created.length})**`);
+  console.log(compact(created, 5));
+  console.log("");
+  console.log("<details><summary>Show all new translations</summary>");
   console.log("");
   console.log("| English | 简体中文 |");
   console.log("| --- | --- |");
-  for (const [key, value] of created.slice(0, 30)) console.log(`| ${cell(key)} | ${cell(value)} |`);
-  if (created.length > 30) console.log(`\n…and ${created.length - 30} more.`);
+  for (const [key, value] of created) console.log(`| ${cell(key)} | ${cell(value)} |`);
+  console.log("");
+  console.log("</details>");
   console.log("");
 }
 if (modified.length) {
-  console.log(`### Updated translations (${modified.length})`);
+  console.log(`**Updated translations (${modified.length})**`);
+  console.log(compact(modified, 5));
+  console.log("");
+  console.log("<details><summary>Show all updated translations</summary>");
   console.log("");
   console.log("| Key | New 简体中文 |");
   console.log("| --- | --- |");
-  for (const [key, value] of modified.slice(0, 20)) console.log(`| ${cell(key)} | ${cell(value)} |`);
-  if (modified.length > 20) console.log(`\n…and ${modified.length - 20} more.`);
+  for (const [key, value] of modified) console.log(`| ${cell(key)} | ${cell(value)} |`);
+  console.log("");
+  console.log("</details>");
   console.log("");
 }
