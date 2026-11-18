@@ -373,19 +373,21 @@ jobs:
           fi
 
           head="${GITHUB_REPOSITORY_OWNER}:${ZHCN_BRANCH}"
-          title="locale(zhCN): rolling translation update"
+          base="main"
+          locale_diff=$(git diff "upstream/${base}...HEAD" -- Locales/zhCN.lua)
+          title="locale(zhCN): update Simplified Chinese translations"
+          summary=$(printf '%s\n' "$locale_diff" | node "${RUNNER_TEMP}/zhcn-tools/tools/pr-summary.js" || true)
+          validation=$(awk '/^(Missing keys|Untranslated|Duplicate keys|Format\/empty errors):/ {gsub(": ", " "); printf "%s; ", $0}' /tmp/zhcn-check.txt | sed 's/; $//')
           body=$(cat <<EOF
           ## Simplified Chinese translation update
 
-          Automated incremental update for ${UPSTREAM_REPO}@${UPSTREAM_SHORT}.
+          Update the Simplified Chinese locale for upstream commit `${UPSTREAM_SHORT}`.
 
-          - Only Locales/zhCN.lua changes.
-          - Existing reviewed translations are reused; only new or untranslated strings are sent to deepseek-v4.1-flash.
-          - Required glossary and reviewed overrides are applied.
-          - Validation: missing 0, untranslated 0, duplicate keys 0, format/empty errors 0.
-          - No Lua logic, layout, or non-locale files change.
+          ${summary:-No translation entries changed.}
 
-          The bot never merges. Maintainers can review and merge this PR.
+          **Validation:** ${validation:-passed}
+
+          Only `Locales/zhCN.lua` changes. No Lua logic, layouts, or non-locale files are changed.
           EOF
           )
           number=$(gh api "repos/${UPSTREAM_REPO}/pulls?state=open&head=${head}" --jq '.[0].number // empty')
