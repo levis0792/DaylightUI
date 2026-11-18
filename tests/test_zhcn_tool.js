@@ -71,21 +71,20 @@ async function main() {
   const baselineKeys = path.join(baselineRoot, "keys.txt");
   fs.mkdirSync(path.join(baselineRoot, "Locales"), { recursive: true });
   fs.writeFileSync(baselineKeys, ['Keep','New'].map((key) => JSON.stringify(key)).join("\n") + "\n", "utf8");
-  fs.writeFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), [
-    'L["Keep"] = "保留"',
-    'L["New"] = "新增"',
-    "",
-  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), "", "utf8");
+  fs.writeFileSync(path.join(baselineRoot, "baseline.lua"), ['L["Keep"] = "保留"', 'L["New"] = "新增"', ""].join("\n"), "utf8");
   process.env.ZHCN_ROOT = baselineRoot;
   process.env.ZHCN_KEYS_FILE = baselineKeys;
   delete require.cache[require.resolve(toolPath)];
   const baselined = require(toolPath);
-  assert.equal(baselined.baseline(path.join(baselineRoot, "Locales", "zhCN.lua")), 0);
+  assert.equal(baselined.baseline(path.join(baselineRoot, "baseline.lua")), 2);
   const baselineText = fs.readFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), "utf8");
   assert.match(baselineText, /L\["Keep"\] = "保留"/);
   assert.match(baselineText, /L\["New"\] = "新增"/);
+  assert.match(baselineText, /-- More translated lines\./);
+  assert.doesNotMatch(baselineText, /zhcn-fork|DaylightUI translations from/);
   fs.writeFileSync(path.join(baselineRoot, "Locales", "zhCN.lua"), 'L["Keep"] = "\uFFFD"' + String.fromCharCode(10), "utf8");
-  assert.throws(() => baselined.baseline(path.join(baselineRoot, "Locales", "zhCN.lua")), /Invalid baseline translation/);
+  assert.throws(() => baselined.baseline(path.join(baselineRoot, "baseline.lua")), /Invalid baseline translation/);
   delete process.env.ZHCN_ROOT;
   delete process.env.ZHCN_KEYS_FILE;
   fs.rmSync(baselineRoot, { recursive: true, force: true });

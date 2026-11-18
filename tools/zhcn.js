@@ -221,7 +221,7 @@ function applyData(data, label, opts = {}) {
   }
   const toAdd = toApply.filter(([k]) => !entries.has(k));
   if (toAdd.length) {
-    out += `\n-- DaylightUI translations from ${label}.\n`;
+    out += "\n-- More translated lines.\n";
     out += toAdd.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       .map(([k, v]) => `L[${luaQuote(k)}] = ${luaQuote(v)}`).join("\n") + "\n";
   }
@@ -256,7 +256,7 @@ function baseline(file) {
     return 0;
   }
   let text = src.replace(/\n?$/, "\n");
-  text += "\n-- New strings appended by the zhCN maintenance workflow; existing lines are unchanged.\n";
+  text += "\n-- More translated lines.\n";
   text += additions.map(([key, value]) => "L[" + luaQuote(key) + "] = " + luaQuote(value)).join("\n") + "\n";
   fs.writeFileSync(localePath, text, "utf8");
   console.log("Baseline appended " + additions.length + " new entries; existing file kept byte-for-byte.");
