@@ -12,7 +12,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
       UPSTREAM: dayightt/DaylightUI
-      HEAD_BRANCH: levis0792:codex/zhcn-72
+      HEAD_BRANCH: levis0792:automation/zhcn
     steps:
       - name: Verify the single maintained pull request
         shell: bash
