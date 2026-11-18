@@ -377,10 +377,10 @@ jobs:
           body=$(cat <<EOF
           ## Simplified Chinese translation update
 
-          Automated incremental update for `${UPSTREAM_REPO}@${UPSTREAM_SHORT}`.
+          Automated incremental update for ${UPSTREAM_REPO}@${UPSTREAM_SHORT}.
 
-          - Only `Locales/zhCN.lua` changes.
-          - Existing reviewed translations are reused; only new or untranslated strings are sent to `deepseek-v4.1-flash`.
+          - Only Locales/zhCN.lua changes.
+          - Existing reviewed translations are reused; only new or untranslated strings are sent to deepseek-v4.1-flash.
           - Required glossary and reviewed overrides are applied.
           - Validation: missing 0, untranslated 0, duplicate keys 0, format/empty errors 0.
           - No Lua logic, layout, or non-locale files change.
@@ -388,7 +388,6 @@ jobs:
           The bot never merges. Maintainers can review and merge this PR.
           EOF
           )
-
           number=$(gh api "repos/${UPSTREAM_REPO}/pulls?state=open&head=${head}" --jq '.[0].number // empty')
           if [ -z "$number" ]; then
             number=$(gh api --method POST "repos/${UPSTREAM_REPO}/pulls" \
