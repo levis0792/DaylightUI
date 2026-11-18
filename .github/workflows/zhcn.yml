@@ -406,6 +406,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$UPSTREAM_SHORT" || { echo "::error::Upstream short SHA is empty."; exit 1; }
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::GH_PR_TOKEN is not configured. It needs repo access to open a PR in ${UPSTREAM_REPO}."
             exit 1
