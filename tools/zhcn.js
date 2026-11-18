@@ -182,6 +182,10 @@ function englishLeftover(key, value) {
       if (run > longest) longest = run;
     }
     if (longest >= 3 && !isKeywordPage) return true;
+    // "(by DaylightUI)" is short but still has an untranslated preposition.
+    // Ignore key/search tokens and technical in/out labels around it.
+    const englishProse = ascii.filter((w) => !MIXED_ASCII_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w));
+    if (englishProse.some((w) => /^(?:by|from|with|for|and|or|the|of)$/i.test(w))) return true;
     return words.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w));
   }
   // An all-English value is never a translation unless it is one of the

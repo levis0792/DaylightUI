@@ -89,6 +89,15 @@ async function main() {
   delete process.env.ZHCN_KEYS_FILE;
   fs.rmSync(baselineRoot, { recursive: true, force: true });
   delete require.cache[require.resolve(toolPath)];
+  const { readTranslations } = luaStrings;
+  const generatedTable = [
+    "P.translations = {",
+    "  [\"It\\'s ready\"] = \"已就绪\",",
+    "}",
+  ].join("\n");
+  const generated = readTranslations(generatedTable);
+  assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
+
   const { highRisk, batchSize, requestModel, reviewModel, reviewModels } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), false);
@@ -162,6 +171,7 @@ async function main() {
   assert.equal(englishLeftover("Kinds", "类型：gear weapon armor"), true, "ordinary leaked words still fail");
   assert.equal(englishLeftover("logo-title.png", "logo-title.png"), false, "texture filenames stay unchanged");
   assert.equal(englishLeftover("Search", "Search"), true, "a cached English key is still untranslated");
+  assert.equal(englishLeftover("Addon list", "插件列表 (by DaylightUI)"), true, "a short English attribution is caught");
 
   // Author-source changes: removed keys must go, changed English keys must be
   // translated, and an English value must never be reused as memory.
@@ -198,6 +208,26 @@ async function main() {
   assert.match(authorText, /L\["\|cff00ff00Code\|r"\] = "\|cff00ff00你好\|r"/, "a dropped color code is repaired");
   assert.doesNotMatch(authorText, /L\["Removed"\]/, "a translation for a deleted source key is pruned");
   assert.equal(authorTool.prune(), 0, "pruning twice is a no-op");
+  // Author changes can remove a key while introducing a new one. The old key
+  // must be pruned and the new exact key must be filled from the reviewed baseline.
+  fs.writeFileSync(authorKeys, ["Visible", "New label"].map((k) => JSON.stringify(k)).join("\n") + "\n", "utf8");
+  fs.writeFileSync(path.join(authorRoot, "Locales", "zhCN.lua"), [
+    'L["Visible"] = "可见"',
+    'L["Removed"] = "旧标签"',
+    "",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(authorRoot, "baseline.lua"), [
+    'L["Visible"] = "可见"',
+    'L["New label"] = "新标签"',
+    "",
+  ].join("\n"), "utf8");
+  delete require.cache[require.resolve(toolPath)];
+  const authorChanged = require(toolPath);
+  authorChanged.sync(path.join(authorRoot, "baseline.lua"));
+  const authorChangedText = fs.readFileSync(path.join(authorRoot, "Locales", "zhCN.lua"), "utf8");
+  assert.match(authorChangedText, /L\["New label"\] = "新标签"/, "a new exact key receives its reviewed translation");
+  assert.doesNotMatch(authorChangedText, /L\["Removed"\]/, "a removed source key is pruned");
+  delete require.cache[require.resolve(toolPath)];
   delete process.env.ZHCN_ROOT;
   delete process.env.ZHCN_KEYS_FILE;
   fs.rmSync(authorRoot, { recursive: true, force: true });

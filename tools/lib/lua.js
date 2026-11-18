@@ -129,13 +129,16 @@ function tokenize(source) {
 function readTranslations(source) {
   const out = new Map();
   const start = source.indexOf("P.translations");
+  if (start < 0) return out;
   const lineRe = /^\s*\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")\s*,?\s*$/;
   const lines = source.slice(start).split(/\r?\n/);
   for (const line of lines) {
     if (line.trim() === "}") break;
     const m = lineRe.exec(line);
     if (!m) continue;
-    out.set(JSON.parse(m[1]), JSON.parse(m[2]));
+    // This is Lua, not JSON: \' is a valid Lua escape and JSON.parse
+    // rejects it. Use the same decoder as the locale tool.
+    out.set(decodeShortString(m[1]), decodeShortString(m[2]));
   }
   return out;
 }

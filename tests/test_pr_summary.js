@@ -31,6 +31,10 @@ assert.match(out.stdout, /\| Completed \| 已完成 \|/);
 assert.match(out.stdout, /\| Old \| 新译文 \|/);
 assert.match(out.stdout, /A \\\| B/);
 
+out = run(diff.replace("已完成", "已" + String.fromCharCode(0xFFFD)));
+assert.notEqual(out.status, 0, "a corrupt description must fail before it is published");
+assert.match(out.stderr, /U\+FFFD/);
+
 out = run("");
 assert.equal(out.status, 0, out.stderr);
 assert.equal(out.stdout.trim(), "Added 0, updated 0.");

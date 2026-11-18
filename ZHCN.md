@@ -5,7 +5,7 @@ release. The workflow lives in `.github/workflows/zhcn.yml`.
 
 ## What runs automatically
 
-Every 15 minutes (GitHub may delay scheduled jobs) and whenever manually triggered:
+Every two hours (GitHub may delay scheduled jobs), on relevant maintenance pushes, and whenever manually triggered:
 
 1. Checks `dayightt/DaylightUI:main` and reuses an existing run for the same SHA, so one author commit triggers one update.
 2. Scans every shipped Lua source file for visible UI text.
@@ -15,7 +15,7 @@ Every 15 minutes (GitHub may delay scheduled jobs) and whenever manually trigger
 6. Runs `tests/test_zhcn_tool.js` to prove the approved glossary is in the AI request and transient request failures are retried with backoff.
 7. Runs the author's own `luajit tests/run.lua --only test_locale` test against the generated locale.
 8. Commits `Locales/zhCN.lua` to `automation/zhcn` only when it changed and the native locale test passed.
-9. Merges the author's latest `main` into the automation branch without force-pushing and creates or updates the pull request to the author's `main`.
+9. Rebuilds the automation branch on the author's latest `main` and creates or updates the pull request to the author's `main`.
 10. Keeps the same PR current on later author commits; if a new upstream release adds no visible text, the locale diff stays unchanged.
 
 The bot never pushes directly to upstream and never merges its own PR.
@@ -33,6 +33,24 @@ In the fork `levis0792/DaylightUI`:
 
 The workflow uses the repository's built-in `GITHUB_TOKEN`; no personal token is
 needed. `contents: write` and `pull-requests: write` are explicitly enabled.
+
+## Failure and monitoring behavior
+
+The scheduled workflow is conservative: a clean, unchanged upstream commit stops after
+the cheap SHA read and reports success, so an empty run is not a failure. When there is
+work, the workflow records the upstream SHA on its state branch only after the locale
+push and the upstream PR check succeed. A failed PR/token/API call therefore leaves the
+SHA pending, and the next scheduled run retries it instead of silently skipping it.
+
+For long-running operation, watch the `Update zhCN translation` workflow. A red run
+means the pending SHA was not recorded; open the failed step and the uploaded
+`zhcn-ai-log` artifact. A green run whose logs say `nothing to translate` is healthy
+and idle. The job has a 45-minute cap so a stuck provider cannot block the concurrency
+group indefinitely. The run summary lists the scan, translation, commit and PR steps.
+
+Before opening a PR, the workflow checks that the generated diff only touches
+`Locales/zhCN.lua`, regenerates the summary without suppressing failures, and runs a
+final strict coverage check. The PR body is never published with corrupted text.
 
 ## Translation quality controls
 

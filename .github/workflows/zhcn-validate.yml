@@ -7,12 +7,32 @@ on:
       - "tools/zhcn.js"
       - "tools/lib/**"
   workflow_dispatch:
+    inputs:
+      pull_request:
+        description: "Pull request number to validate (default: this branch)"
+        required: false
+        type: string
+      upstream_repo:
+        description: "Repository that owns the pull request"
+        required: false
+        default: "dayightt/DaylightUI"
+        type: string
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the pull request under test
+        if: inputs.pull_request != ''
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          repository: ${{ inputs.upstream_repo }}
+          ref: refs/pull/${{ inputs.pull_request }}/head
+      - name: Check out this branch
+        if: inputs.pull_request == ''
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v4

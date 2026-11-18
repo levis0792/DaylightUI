@@ -34,10 +34,15 @@ on:
       - main
     paths:
       - ".github/workflows/zhcn.yml"
+      - ".github/workflows/zhcn-validate.yml"
       - "tools/zhcn.js"
       - "tools/zhcn-glossary.json"
+      - "tools/zhcn-overrides.json"
+      - "tools/lib/**"
+      - "tools/pr-summary.js"
       - "Locales/zhCN.lua"
       - "tests/test_zhcn_tool.js"
+      - "tests/test_pr_summary.js"
 
 permissions:
   contents: write
@@ -52,6 +57,7 @@ run-name: "zhCN ${{ inputs.trigger_note || inputs.upstream_sha || github.run_id 
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
@@ -98,6 +104,11 @@ jobs:
             last=$(tr -d '[:space:]' < /tmp/zhcn-state)
           fi
           force="${{ inputs.force || 'false' }}"
+          # A push to the maintenance branch must exercise the new tooling even
+          # when the author's SHA has not moved.
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            force=true
+          fi
           if [ "$force" != "true" ] && [ -n "$last" ] && [ "$last" = "$upstream_sha" ]; then
             echo "Upstream is still ${upstream_sha}; nothing to translate."
             echo "needed=false" >> "$GITHUB_OUTPUT"
@@ -179,7 +190,13 @@ jobs:
           set +e
           ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" ZHCN_ROOT="$GITHUB_WORKSPACE" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check | tee /tmp/zhcn-check.txt
           code=${PIPESTATUS[0]}
-          if grep -q "Untranslated: 0" /tmp/zhcn-check.txt; then
+          # A clean file needs no repair. Format errors, duplicate keys and
+          # stale keys are deterministic work too; checking only one summary
+          # line made those failures look like a no-op.
+          if grep -q "^Untranslated: 0$" /tmp/zhcn-check.txt && \
+             grep -q "^Removed keys: 0$" /tmp/zhcn-check.txt && \
+             grep -q "^Duplicate keys: 0$" /tmp/zhcn-check.txt && \
+             grep -q "^Format/empty errors: 0$" /tmp/zhcn-check.txt; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
@@ -315,6 +332,30 @@ jobs:
             ${{ runner.temp }}/zhcn-tools/tools/reports/zhcn-consensus-all.json
           if-no-files-found: ignore
 
+      - name: Write the final status summary
+        if: always() && steps.changed.outputs.needed == 'true'
+        shell: bash
+        env:
+          OUTCOME_CHANGED: ${{ steps.changed.outcome }}
+          OUTCOME_SCAN: ${{ steps.scan.outcome }}
+          OUTCOME_ENDPOINT: ${{ steps.endpoint.outcome }}
+          OUTCOME_TRANSLATE: ${{ steps.translate.outcome }}
+          OUTCOME_CHANGES: ${{ steps.changes.outcome }}
+          OUTCOME_PULL: ${{ steps.pull.outcome }}
+        run: |
+          {
+            echo "## zhCN automation status"
+            echo
+            echo "- Changed check: ${OUTCOME_CHANGED:-not-run}"
+            echo "- Coverage scan: ${OUTCOME_SCAN:-not-run}"
+            echo "- Endpoint check: ${OUTCOME_ENDPOINT:-not-run}"
+            echo "- Translation: ${OUTCOME_TRANSLATE:-not-run}"
+            echo "- Commit: ${OUTCOME_CHANGES:-not-run}"
+            echo "- Upstream PR: ${OUTCOME_PULL:-not-run}"
+            echo
+            echo "The processed SHA is recorded only after a successful PR update."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload translation review report
         if: steps.changed.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
@@ -346,24 +387,6 @@ jobs:
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Record the processed upstream commit
-        if: steps.changed.outputs.needed == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Kept on its own branch: polling must never move the PR branch,
-          # otherwise every run invalidates the author's approval of the checks.
-          state=$(mktemp -d)
-          cd "$state"
-          git init -q
-          git config user.name "DarkUI zhCN bot"
-          git config user.email "zhcn-bot@users.noreply.github.com"
-          printf '%s\n' "${{ steps.changed.outputs.sha }}" > .upstream-sha
-          git add .upstream-sha
-          git commit -q -m "state: upstream ${{ steps.upstream.outputs.short }}"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_STATE_BRANCH}"
       - name: Verify the PR contains only the locale
         if: steps.changes.outputs.changed == 'true'
         shell: bash
@@ -392,8 +415,17 @@ jobs:
           base="main"
           locale_diff=$(git diff "upstream/${base}...HEAD" -- Locales/zhCN.lua)
           title="locale(zhCN): update Simplified Chinese translations"
-          summary=$(printf '%s\n' "$locale_diff" | node "${RUNNER_TEMP}/zhcn-tools/tools/pr-summary.js" || true)
-          validation=$(awk '/^(Missing keys|Untranslated|Duplicate keys|Format\/empty errors):/ {gsub(": ", " "); printf "%s; ", $0}' /tmp/zhcn-check.txt | sed 's/; $//')
+          summary=$(printf '%s\n' "$locale_diff" | node "${RUNNER_TEMP}/zhcn-tools/tools/pr-summary.js")
+          ZHCN_ROOT="$GITHUB_WORKSPACE" ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check > /tmp/zhcn-final.txt
+          test -s /tmp/zhcn-final.txt || { echo "::error::Final zhCN check did not produce output."; exit 1; }
+          grep -q "^Missing keys: 0$" /tmp/zhcn-final.txt
+          grep -q "^Untranslated: 0$" /tmp/zhcn-final.txt
+          grep -q "^Duplicate keys: 0$" /tmp/zhcn-final.txt
+          grep -q "^Format/empty errors: 0$" /tmp/zhcn-final.txt
+          grep -q "^Removed keys: 0$" /tmp/zhcn-final.txt
+
+          validation=$(awk '/^(Missing keys|Untranslated|Duplicate keys|Format\/empty errors):/ {gsub(": ", " "); printf "%s; ", $0}' /tmp/zhcn-final.txt | sed 's/; $//')
+
           body=$(cat <<EOF
           ## Simplified Chinese translation update
 
@@ -422,4 +454,24 @@ jobs:
             echo "Updated pull request #${number}."
           fi
           echo "https://github.com/${UPSTREAM_REPO}/pull/${number}"
+          test -n "$number" || { echo "::error::The PR number was not returned."; exit 1; }
           echo "url=https://github.com/${UPSTREAM_REPO}/pull/${number}" >> "$GITHUB_OUTPUT"
+
+      - name: Record the processed upstream commit
+        if: steps.changed.outputs.needed == 'true' && steps.changes.outcome == 'success' && steps.changes.outputs.changed == 'true' && steps.pull.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Record only after the locale was pushed and the PR was verified.
+          # A failed PR/token call leaves this SHA pending for the next run.
+          state=$(mktemp -d)
+          cd "$state"
+          git init -q
+          git config user.name "DarkUI zhCN bot"
+          git config user.email "zhcn-bot@users.noreply.github.com"
+          printf '%s\n' "${{ steps.upstream.outputs.sha }}" > .upstream-sha
+          git add .upstream-sha
+          git commit -q -m "state: upstream ${{ steps.upstream.outputs.short }}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_STATE_BRANCH}"

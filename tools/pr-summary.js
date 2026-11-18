@@ -7,6 +7,15 @@ const fs = require("node:fs");
 const { decodeShortString } = require("./lib/lua");
 
 const diff = fs.readFileSync(0, "utf8");
+
+function assertCleanText(label, text) {
+  if (String(text).includes("\uFFFD")) {
+    throw new Error(label + " contains U+FFFD; refusing to publish a corrupt PR description");
+  }
+}
+
+assertCleanText("diff", diff);
+
 const lineRe = /^([+-])L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/;
 const added = new Map();
 const removed = new Set();
