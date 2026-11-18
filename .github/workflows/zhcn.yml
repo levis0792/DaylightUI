@@ -401,12 +401,10 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         id: pull
         env:
-          UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
           GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$UPSTREAM_SHORT" || { echo "::error::Upstream short SHA is empty."; exit 1; }
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::GH_PR_TOKEN is not configured. It needs repo access to open a PR in ${UPSTREAM_REPO}."
             exit 1
@@ -414,6 +412,10 @@ jobs:
 
           head="${GITHUB_REPOSITORY_OWNER}:${ZHCN_BRANCH}"
           base="main"
+          UPSTREAM_SHORT=$(git -C "${GITHUB_WORKSPACE}" rev-parse --short upstream/main)
+          test -n "$UPSTREAM_SHORT" || { echo "::error::Upstream short SHA is empty."; exit 1; }
+          LOCALE_PATH=$(git -C "${GITHUB_WORKSPACE}" diff --name-only "upstream/${base}...HEAD" -- Locales/zhCN.lua)
+          test "$LOCALE_PATH" = "Locales/zhCN.lua" || { echo "::error::Unexpected locale path: ${LOCALE_PATH:-empty}"; exit 1; }
           locale_diff=$(git diff "upstream/${base}...HEAD" -- Locales/zhCN.lua)
           title="locale(zhCN): update Simplified Chinese translations"
           summary=$(printf '%s\n' "$locale_diff" | node "${RUNNER_TEMP}/zhcn-tools/tools/pr-summary.js")
@@ -436,7 +438,7 @@ jobs:
 
           **Validation:** ${validation:-passed}
 
-          Only `Locales/zhCN.lua` changes. No Lua logic, layouts, or non-locale files are changed.
+          Only `${LOCALE_PATH}` changes. No Lua logic, layouts, or non-locale files are changed.
           EOF
           )
           number=$(gh api "repos/${UPSTREAM_REPO}/pulls?state=open&head=${head}" --jq '.[0].number // empty')
