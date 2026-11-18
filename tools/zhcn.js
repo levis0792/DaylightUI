@@ -283,10 +283,9 @@ function merge(file) {
   report();
 }
 
-// Apply the reviewed fork baseline to the author's current file. Existing
-// lines keep their order and comments; reviewed wording replaces only keys the
-// author still ships, and new runtime keys are appended. This is the rolling
-// PR mode used by the maintenance workflow.
+// Add reviewed values only for keys missing from the author-copy. Existing
+// lines keep their order, comments and wording byte-for-byte; new keys are
+// appended. This is the append-only mode used by the maintenance workflow.
 function sync(file) {
   const source = path.resolve(root, file || "");
   const from = parseLocaleFile(source);
@@ -294,7 +293,7 @@ function sync(file) {
   const { cat } = report({ missingOnly: true });
   const allowed = new Set(cat.keys());
   const data = Object.fromEntries([...from].filter(([k]) => allowed.has(k)));
-  applyData(data, "synced " + path.basename(source), { replace: true });
+  applyData(data, "synced " + path.basename(source));
   report();
 }
 
@@ -368,9 +367,9 @@ function requestModel() {
 
 function reviewModels() {
   const configured = [
-    process.env.ZHCN_REVIEW_MODEL || 'glm-5.3',
-    process.env.ZHCN_REVIEW_FALLBACK_MODEL || 'deepseek-v4-pro',
-    process.env.ZHCN_REVIEW_LAST_MODEL || 'hy4-preview-x',
+    process.env.ZHCN_REVIEW_MODEL || 'deepseek-v4.1-flash',
+    process.env.ZHCN_REVIEW_FALLBACK_MODEL || 'deepseek-v4.1-flash',
+    process.env.ZHCN_REVIEW_LAST_MODEL || 'deepseek-v4.1-flash',
     requestModel(),
   ];
   return [...new Set(configured.filter(Boolean))];
@@ -651,8 +650,8 @@ async function translateConsensus() {
     return;
   }
   const size = integerEnv("ZHCN_CONSENSUS_BATCH_SIZE", 10, 1);
-  const judge = process.env.ZHCN_JUDGE_MODEL || "deepseek-v4-pro";
-  const models = (process.env.ZHCN_CONSENSUS_MODELS || "deepseek-v4.1-flash,glm-5.3,hy4-preview-x")
+  const judge = process.env.ZHCN_JUDGE_MODEL || "deepseek-v4.1-flash";
+  const models = (process.env.ZHCN_CONSENSUS_MODELS || "deepseek-v4.1-flash")
     .split(",").map((x) => x.trim()).filter(Boolean);
   const state = readConsensus();
   state.batches = state.batches || {};
@@ -728,8 +727,8 @@ async function rebuildAll() {
   const { cat } = report({ missingOnly: true });
   const keys = [...cat.keys()];
   const size = integerEnv("ZHCN_REBUILD_BATCH_SIZE", 10, 1);
-  const judge = process.env.ZHCN_JUDGE_MODEL || "deepseek-v4-pro";
-  const models = (process.env.ZHCN_CONSENSUS_MODELS || "deepseek-v4.1-flash,glm-5.3,hy4-preview-x")
+  const judge = process.env.ZHCN_JUDGE_MODEL || "deepseek-v4.1-flash";
+  const models = (process.env.ZHCN_CONSENSUS_MODELS || "deepseek-v4.1-flash")
     .split(",").map((x) => x.trim()).filter(Boolean);
   const state = readConsensusAll();
   state.batches = state.batches || {};
