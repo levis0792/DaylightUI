@@ -1,101 +1,39 @@
-name: Finalize zhCN pull requests
+name: Verify zhCN maintenance PR
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/finalize-zhcn-prs.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  finalize:
+  verify:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
       UPSTREAM: dayightt/DaylightUI
-      HEAD_BRANCH: levis0792:codex/zhcn-reword-terms
+      HEAD_BRANCH: levis0792:codex/zhcn-72
     steps:
-      - name: Check the pull request token
+      - name: Verify the single maintained pull request
+        shell: bash
         run: |
+          set -euo pipefail
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::GH_PR_TOKEN is not configured."
             exit 1
           fi
 
-      - name: Create or update the rewording pull request
-        id: reword
-        shell: bash
-        run: |
-          set -euo pipefail
-          body=$(mktemp)
-          cat > "$body" <<'EOF'
-          This PR only reviews existing zhCN wording. It adds no keys and does not change the file order or comments.
-
-          ### Terms used consistently
-
-          - **General** settings page: 常规
-          - **General** chat channel: 综合
-          - **Bar icons** in the damage meter: 伤害统计条图标
-          - **Whisper**: 密语 everywhere
-          - **Point 1–5**: 第1点–第5点
-
-          It keeps the fixes called out in review: 潜行者, 浮动战斗信息, 拾取, `not in combat`, and the threat-meter last-name wording.
-
-          ### Validation
-
-          - 50 existing lines reworded; no keys added or removed.
-          - Placeholders and color codes preserved.
-          - File order and comments preserved.
-          - `git diff --check` passes.
-          EOF
-
-          existing=$(gh api "repos/${UPSTREAM}/pulls?state=open&head=${HEAD_BRANCH}" --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            number="$existing"
-            jq -Rs --arg title "locale(zhCN): align game terminology" '{title:$title,body:.}' "$body" > /tmp/reword-patch.json
-            gh api -X PATCH "repos/${UPSTREAM}/pulls/${number}" --input /tmp/reword-patch.json >/dev/null
-          else
-            jq -Rs --arg title "locale(zhCN): align game terminology" --arg head "$HEAD_BRANCH" --arg base "main" '{title:$title,head:$head,base:$base,body:.}' "$body" > /tmp/reword-create.json
-            response=$(gh api -X POST "repos/${UPSTREAM}/pulls" --input /tmp/reword-create.json)
-            number=$(jq -r '.number' <<<"$response")
+          result=$(gh api "repos/${UPSTREAM}/pulls?state=open&head=${HEAD_BRANCH}" --jq '.[0] // empty')
+          if [ -z "$result" ]; then
+            echo "::error::No open zhCN maintenance PR exists for ${HEAD_BRANCH}."
+            exit 1
           fi
-          echo "number=$number" >> "$GITHUB_OUTPUT"
 
-      - name: Update pull request 71
-        shell: bash
-        env:
-          REWORD_NUMBER: ${{ steps.reword.outputs.number }}
-        run: |
-          set -euo pipefail
-          body=$(mktemp)
-          cat > "$body" <<EOF
-          This PR only adds strings that are missing from the current zhCN locale.
-
-          - Rebased onto current main.
-          - Keeps the existing file order and comments.
-          - Does not reword, reorder, or remove any existing line.
-          - Leaves out the five unused spell lines removed from main.
-          - Adds 90 missing translations.
-
-          Validation: +92 / -0 in \`Locales/zhCN.lua\`, with no duplicate or formatting errors.
-
-          The terminology and rewording review is separate and follows in its own PR.
-          EOF
-          jq -Rs --arg title "locale(zhCN): add missing 1.9.3 strings" '{title:$title,body:.}' "$body" > /tmp/pr71-patch.json
-          gh api -X PATCH "repos/${UPSTREAM}/pulls/71" --input /tmp/pr71-patch.json >/dev/null
-
-      - name: Link the rewording pull request from #71
-        shell: bash
-        env:
-          REWORD_NUMBER: ${{ steps.reword.outputs.number }}
-        run: |
-          set -euo pipefail
-          comment="The rewording review is now in #${REWORD_NUMBER}."
-          if ! gh api "repos/${UPSTREAM}/issues/71/comments?per_page=100" --paginate --jq '.[].body' | grep -Fqx "$comment"; then
-            jq -n --arg body "$comment" '{body:$body}' > /tmp/comment.json
-            gh api -X POST "repos/${UPSTREAM}/issues/71/comments" --input /tmp/comment.json >/dev/null
+          number=$(jq -r '.number' <<<"$result")
+          base=$(jq -r '.base.ref' <<<"$result")
+          if [ "$base" != "main" ]; then
+            echo "::error::PR #${number} targets ${base}, expected main."
+            exit 1
           fi
+
+          echo "The single maintained zhCN PR is #${number}, targeting ${base}."
