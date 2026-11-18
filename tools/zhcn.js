@@ -300,7 +300,10 @@ function sync(file) {
 // Force reviewed values (for example fixed game terms) over upstream/AI ones.
 function override(file) {
   const data = JSON.parse(fs.readFileSync(path.resolve(root, file || ""), "utf8"));
-  applyData(data, "overrides " + path.basename(file), { replace: true });
+  const { cat } = report({ missingOnly: true });
+  const allowed = new Set(cat.keys());
+  const reviewed = Object.fromEntries(Object.entries(data).filter(([key]) => allowed.has(key)));
+  applyData(reviewed, "overrides " + path.basename(file), { replace: true });
   report();
 }
 function apply(file) {
