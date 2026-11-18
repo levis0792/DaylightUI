@@ -48,10 +48,8 @@ function compact(items, limit) {
 
 console.log("");
 if (created.length) {
-  console.log(`**New translations (${created.length})**`);
-  console.log(compact(created, 5));
-  console.log("");
-  console.log("<details><summary>Show all new translations</summary>");
+  console.log("<details>");
+  console.log(`<summary>New translations (${created.length})</summary>`);
   console.log("");
   console.log("| English | 简体中文 |");
   console.log("| --- | --- |");
@@ -61,10 +59,8 @@ if (created.length) {
   console.log("");
 }
 if (modified.length) {
-  console.log(`**Updated translations (${modified.length})**`);
-  console.log(compact(modified, 5));
-  console.log("");
-  console.log("<details><summary>Show all updated translations</summary>");
+  console.log("<details>");
+  console.log(`<summary>Updated translations (${modified.length})</summary>`);
   console.log("");
   console.log("| Key | New 简体中文 |");
   console.log("| --- | --- |");

@@ -25,8 +25,8 @@ const diff = [
 let out = run(diff);
 assert.equal(out.status, 0, out.stderr);
 assert.match(out.stdout, /Added 2, updated 1/);
-assert.match(out.stdout, /\*\*New translations \(2\)\*\*/);
-assert.match(out.stdout, /\*\*Updated translations \(1\)\*\*/);
+assert.match(out.stdout, /<summary>New translations \(2\)<\/summary>/);
+assert.match(out.stdout, /<summary>Updated translations \(1\)<\/summary>/);
 assert.match(out.stdout, /\| Completed \| 已完成 \|/);
 assert.match(out.stdout, /\| Old \| 新译文 \|/);
 assert.match(out.stdout, /A \\\| B/);
