@@ -138,7 +138,7 @@ async function main() {
 
   const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations } = require(toolPath);
 
-  assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), false);
+  assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), true, 'short UI labels are high risk');
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
   assert.equal(highRisk('%s and %d', 'Bags/Options.lua:1'), true, 'multiple placeholders are high risk');
   assert.equal(highRisk('Choose a kind (unit, item, spell, world or compare)', 'Tooltip.lua:10'), true, 'technical enum context is high risk');
@@ -400,7 +400,7 @@ async function main() {
         assert.match(payload.messages[0].content, /Required glossary:/);
         assert.match(payload.messages[0].content, /"Focus Target":"焦点目标"/);
         assert.match(payload.messages[0].content, /"tooltip":"鼠标提示"/);
-        assert.match(payload.messages[0].content, /Match the reviewed tone of the #138 auction-house and loot-roll strings/);
+        assert.doesNotMatch(payload.messages[0].content, /Match the reviewed tone of the #138 auction-house and loot-roll strings/);
         const userPayload = JSON.parse(payload.messages[1].content);
         assert.equal(userPayload.strings_to_translate[0].source_location, "Some.lua:10");
         assert.ok(Array.isArray(userPayload.strings_to_translate[0].nearby_ui_text), "nearby context must be sent");

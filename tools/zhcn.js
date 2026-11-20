@@ -196,8 +196,8 @@ function englishLeftover(key, value) {
       !isAllowedTechnical(w) &&
       !UI_ACTION_WORDS.has(w.toLowerCase());
     const isKeywordPage = /\b(?:q>|ilvl>|boe\s*&|gear\s*,)/i.test(String(key));
-    const ascii = words.filter((w) => !hasHan(w));
     const isBoundary = (w) => !isOrdinary(w);
+    const ascii = words.filter((w) => !hasHan(w));
     if (ascii.length && words.some((w) => hasHan(w)) && ascii.every((w) => ALLOWED_ENGLISH.has(w) || MIXED_ASCII_WORDS.has(w.toLowerCase()) || isAllowedTechnical(w))) return false;
     let run = 0;
     let longest = 0;
@@ -648,7 +648,9 @@ function highRisk(key, ref) {
   // Short domain-sensitive terms frequently mistranslated out of context.
   const domainSensitive = /\b(?:passed|pass|roll|rolled|rolling|need|greed|post|posted|posting|buyout|deal|undercut|pill|ring|ticks|flight|landing|swing|usual)\b/i.test(text)
     || /\bpassed\b/i.test(String(ref || ""));
-  return text.length >= 80 || holes >= 2 || clauses >= 2 || /(?:^|[/_-])(?:new|unreleased)(?:[/_.-]|$)/i.test(moduleName) || technicalEnum || commandHeavy || domainSensitive;
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const shortLabel = words.length > 0 && words.length <= 3 && /[A-Za-z]{2,}/.test(text);
+  return text.length >= 80 || holes >= 2 || clauses >= 2 || /(?:^|[/_-])(?:new|unreleased)(?:[/_.-]|$)/i.test(moduleName) || technicalEnum || commandHeavy || domainSensitive || shortLabel;
 }
 
 function nearbyContext(cat, key, refs) {
@@ -731,7 +733,6 @@ function buildSystemPrompt(glossary, opts = {}) {
     "Domain disambiguation rules:",
     "- Auction House: Post=上架 (never 邮寄), Buyout=一口价 (never 直购价), Deposit=保管费, Undercut=压价, Undercut by (setting)=压价幅度, Deal price=优惠价阈值 (never 成交价), Usual price=常规价格 (never mix 通常/常见/平时).",
     "- Loot Rolls: Need=需求, Greed=贪婪, Pass=放弃 (never 通过), Pick ticks=选择标记 (never 跳数), With one roll=单个掷骰时.",
-    "Match the reviewed tone of the #138 auction-house and loot-roll strings: concise, natural zhCN WoW UI wording.",
     "- UI & Bars: Fight pill=战斗胶囊 (never 药丸), portrait ring=头像环 (never 光环), Flight timer=飞行计时器, Welcome on landing=抵达欢迎, Swing timer=攻击计时条, Power bar=资源条, bar=计量条/计时条 (never 动作条 unless English says action bar), handle=控制柄.",
     "- Totems: Air totem=空气图腾, Earth totem=大地图腾, Fire totem=火焰图腾, Water totem=水之图腾.",
     "Keep PvP, PvE, RP, DPS, HPS, NPC, UI, addon names (Raider.IO, Auctionator, TSM, Questie, etc.), slash commands, font names, URLs and code identifiers in English.",
@@ -879,6 +880,24 @@ async function requestBatch(batch, memory, opts = {}) {
   throw deferred;
 }
 
+function orderRemainingForContext(keys, cat) {
+  const byFile = new Map();
+  for (const k of keys) {
+    const ref = String(((cat.get(k) && cat.get(k).refs) || [])[0] || "");
+    const file = ref.replace(/:\d+$/, "") || "__misc__";
+    if (!byFile.has(file)) byFile.set(file, []);
+    byFile.get(file).push(k);
+  }
+  const ordered = [];
+  const files = [...byFile.keys()].sort();
+  for (const file of files) {
+    const group = byFile.get(file);
+    group.sort((a, b) => b.length - a.length || a.localeCompare(b));
+    ordered.push(...group);
+  }
+  return ordered;
+}
+
 async function translate(opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const { cat, entries, english } = report({ missingOnly: true });
@@ -902,7 +921,8 @@ async function translate(opts = {}) {
   }
   writeCheckpoint(result);
 
-  const remaining = missing.filter((k) => !(k in result));
+  const rawRemaining = missing.filter((k) => !(k in result));
+  const remaining = orderRemainingForContext(rawRemaining, cat);
   console.log(`Translation memory reused: ${missing.length - remaining.length}`);
   console.log(`AI translation needed: ${remaining.length}`);
 
@@ -911,8 +931,9 @@ async function translate(opts = {}) {
   for (let i = 0; i < remaining.length; i += size) {
     const batch = remaining.slice(i, i + size).map((k) => [k, cat.get(k).refs.slice(0, 3).join(", "), nearbyContext(cat, k, cat.get(k).refs)]);
     console.log(`AI batch ${i / size + 1}/${Math.ceil(remaining.length / size)} (${batch.length} strings)`);
+    const batchMemory = translationMemory(new Map([...entries, ...Object.entries(result)]));
     try {
-      Object.assign(result, await requestBatch(batch, memory, { fetchImpl }));
+      Object.assign(result, await requestBatch(batch, batchMemory, { fetchImpl }));
       writeCheckpoint(result);
     } catch (e) {
       console.error(`AI batch ${i / size + 1} still failed: ${e.message || e}`);
@@ -1214,4 +1235,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt };
+module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, orderRemainingForContext };
