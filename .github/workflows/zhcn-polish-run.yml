@@ -1,0 +1,65 @@
+name: zhCN polish draft
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/zhcn-polish-run.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zhcn-polish-draft
+  cancel-in-progress: false
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      API_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
+      POLISH_MODEL: ${{ vars.POLISH_MODEL || 'deepseek-v4.1-flash' }}
+      POLISH_BATCH_SIZE: ${{ vars.POLISH_BATCH_SIZE || '20' }}
+      POLISH_RETRIES: ${{ vars.POLISH_RETRIES || '5' }}
+      POLISH_TIMEOUT_MS: '180000'
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Scan legacy high-risk entries
+        run: node tools/polish-legacy.js scan
+
+      - name: Draft conservative review without touching locale
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/polish-legacy.js run
+          test -z "$(git status --porcelain -- Locales/zhCN.lua)"
+
+      - name: Publish draft reports to temporary branch
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "zhCN polish bot"
+          git config user.email "zhcn-bot@users.noreply.github.com"
+          git switch -C codex/zhcn-polish-reports
+          git add -f tools/reports/zhcn-polish-scan.json tools/reports/zhcn-polish-diff.json tools/reports/zhcn-polish-review.md tools/reports/zhcn-polish-checkpoint.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No report changes to publish."
+          else
+            git commit -m "reports: zhCN polish draft"
+            git push --force origin HEAD:codex/zhcn-polish-reports
+          fi
