@@ -172,6 +172,9 @@ async function main() {
   assert.equal(englishLeftover("logo-title.png", "logo-title.png"), false, "texture filenames stay unchanged");
   assert.equal(englishLeftover("Search", "Search"), true, "a cached English key is still untranslated");
   assert.equal(englishLeftover("Addon list", "插件列表 (by DaylightUI)"), true, "a short English attribution is caught");
+  assert.equal(englishLeftover("%s: tooltip lines need a kind (unit, item, spell, world or compare) and a function.", "%s：鼠标提示行需要类型（unit、item、spell、world 或 compare）和函数。"), false, "technical kind values stay English inside the enum context");
+  assert.equal(englishLeftover("Unrelated label", "无关标签：unit item spell world compare"), true, "technical enum values are not globally allowed");
+
 
   // Author-source changes: removed keys must go, changed English keys must be
   // translated, and an English value must never be reused as memory.
