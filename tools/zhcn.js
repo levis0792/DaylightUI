@@ -10,26 +10,22 @@
 // translate needs an OpenAI-compatible chat endpoint:
 //   OPENAI_API_KEY=...
 //   OPENAI_BASE_URL=https://api.openai.com/v1   (optional)
-//   OPENAI_MODEL=gpt-4.1-mini                    (optional)
+//   OPENAI_MODEL=gpt-4.1-mini                   (optional)
 //
 // Existing reviewed entries are the translation memory. Only keys absent from
 // zhCN.lua are sent to the model, in small batches, and every result is checked
 // for placeholders and color codes before it is written.
+
 const fs = require("node:fs");
 const path = require("node:path");
-
 const defaultRoot = path.resolve(__dirname, "..");
 const root = path.resolve(process.env.ZHCN_ROOT || defaultRoot);
 const localePath = path.join(root, "Locales", "zhCN.lua");
-const toolRoot = process.env.ZHCN_TOOL_ROOT
-  ? path.resolve(process.env.ZHCN_TOOL_ROOT)
-  : defaultRoot;
+const toolRoot = process.env.ZHCN_TOOL_ROOT ? path.resolve(process.env.ZHCN_TOOL_ROOT) : defaultRoot;
 const { extract } = require(path.join(toolRoot, "tools", "lib", "catalog"));
 const { decodeShortString, luaQuote } = require(path.join(toolRoot, "tools", "lib", "lua"));
 const { formatOk, specifiers, codesOk } = require(path.join(toolRoot, "tools", "lib", "format"));
-
 const LOCALE_LINE = /^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/;
-
 const checkpointPath = process.env.ZHCN_CHECKPOINT
   ? path.resolve(process.env.ZHCN_CHECKPOINT)
   : path.join(root, ".zhcn-cache", "checkpoint.json");
@@ -46,9 +42,26 @@ function localeLine(line) {
   }
 }
 
+function edgeSpacesMatch(key, value) {
+  const leadKey = String(key).match(/^\s*/)[0];
+  const leadVal = String(value).match(/^\s*/)[0];
+  const trailKey = String(key).match(/\s*$/)[0];
+  const trailVal = String(value).match(/\s*$/)[0];
+  return leadKey === leadVal && trailKey === trailVal;
+}
+
+function sameEdgeFormat(srcKey, memKey) {
+  const leadSrc = String(srcKey).match(/^\s*/)[0];
+  const leadMem = String(memKey).match(/^\s*/)[0];
+  const trailSrc = String(srcKey).match(/[\s.:!?…]*$/)[0];
+  const trailMem = String(memKey).match(/[\s.:!?…]*$/)[0];
+  return leadSrc === leadMem && trailSrc === trailMem;
+}
+
 function validTranslation(key, value) {
   if (typeof value !== "string" || !value.trim() || value.includes("\uFFFD")) return false;
   if (!formatOk(key, value) || !codesOk(key, value)) return false;
+  if (!edgeSpacesMatch(key, value)) return false;
   return !englishLeftover(key, value);
 }
 
@@ -67,22 +80,31 @@ function readLocale() {
 }
 
 const ALLOWED_ENGLISH = new Set([
-  "PvP", "PvE", "RP", "DPS", "HPS", "NPC", "UI", "AFK", "AP", "AOE", "AoE",
-  "GUID", "ID", "PVP", "PVE", "Daylight UI", "Daylight", "TW", "CN", "US", "EU",
-  "CDM",
+  "PvP", "PvE", "RP", "DPS", "HPS", "NPC", "UI", "AFK", "AP", "AOE", "AoE", "GUID", "ID", "PVP", "PVE",
+  "Daylight UI", "Daylight", "TW", "CN", "US", "EU", "CDM",
   // Client terms and units that are correct and clearer in English.
-  "PTR", "Beta", "WoW", "XP", "HUD", "ms",
-  "Alt", "Ctrl", "Shift", "Esc", "Delete", "DELETE",
+  "PTR", "Beta", "WoW", "XP", "HUD", "ms", "Alt", "Ctrl", "Shift", "Esc", "Delete", "DELETE",
   // AddOn and font names stay as published so players can find them.
-  "Ace3", "Attune", "Baganator", "Bagnon", "BuffLedger", "Deadly Boss Mods",
-  "Dewdrop", "OPie", "Plater", "Platynator", "PrettyTooltip", "Questie",
-  "RestedXP Guides", "Threat Plates", "Archivo Narrow", "Arial Narrow",
-  "Barlow Condensed", "Expressway", "Fira Sans", "Lato", "PT Sans Narrow",
-  "Poppins", "Russo One", "DaylightUI", "DaylightUI Discord",
+  "Ace3", "Attune", "Auctionator", "Baganator", "Bagnon", "BuffLedger", "Deadly Boss Mods", "Dewdrop", "OPie",
+  "Plater", "Platynator", "PrettyTooltip", "Questie", "Raider.IO", "RestedXP Guides", "Threat Plates", "TSM",
+  "Archivo Narrow", "Arial Narrow", "Barlow Condensed", "Expressway",
+  "Fira Sans", "Lato", "PT Sans Narrow", "Poppins", "Russo One",
+  "DaylightUI", "DaylightUI Discord",
   // Style and addon names users see in the UI, plus the donation page.
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
-  "Alfa Slab One", "Anton", "Archivo Black", "Audiowide", "Baloo 2", "Bangers", "Bebas Neue", "Big Shoulders", "Black Ops One", "Bowlby One", "Bungee", "Chakra Petch", "Changa One", "Chewy", "Cinzel", "Coiny", "Comfortaa", "Delius", "Dosis", "Fabled Class", "Fabled Core", "Fabled Dimension", "Fabled Myth", "Fabled Pixels", "Fabled Pixels v2", "Fabled Realm", "Fabled Realm v2", "Fabled Regalia", "Fizzle", "Fredoka", "Gluten", "Grandstander", "Itim", "Kanit Black Italic", "Lilita One", "Luckiest Guy", "M PLUS Rounded", "Mali", "MedievalSharp", "Metamorphous", "Nunito Black", "Orbitron", "Oswald", "Passion One", "Permanent Marker", "Pirata One", "Press Start 2P", "Quicksand", "Righteous", "Rubik", "Rubik Glitch", "Rubik Mono", "Sniglet", "Squada One", "Staatliches", "Teko", "Titan One", "Varela Round",
-  "Flat", "Custom", "Patreon", "Ko-fi", "EllesmereUI", "DaylightMogul", "SkillUp", "SkillUp Forever",
+  "Alfa Slab One", "Anton", "Archivo Black", "Audiowide", "Baloo 2", "Bangers",
+  "Bebas Neue", "Big Shoulders", "Black Ops One", "Bowlby One", "Bungee",
+  "Chakra Petch", "Changa One", "Chewy", "Cinzel", "Coiny", "Comfortaa",
+  "Delius", "Dosis", "Fabled Class", "Fabled Core", "Fabled Dimension",
+  "Fabled Myth", "Fabled Pixels", "Fabled Pixels v2", "Fabled Realm",
+  "Fabled Realm v2", "Fabled Regalia", "Fizzle", "Fredoka", "Gluten",
+  "Grandstander", "Itim", "Kanit Black Italic", "Lilita One", "Luckiest Guy",
+  "M PLUS Rounded", "Mali", "MedievalSharp", "Metamorphous", "Nunito Black",
+  "Orbitron", "Oswald", "Passion One", "Permanent Marker", "Pirata One",
+  "Press Start 2P", "Quicksand", "Righteous", "Rubik", "Rubik Glitch",
+  "Rubik Mono", "Sniglet", "Squada One", "Staatliches", "Teko", "Titan One",
+  "Varela Round", "Flat", "Custom", "Patreon", "Ko-fi",
+  "EllesmereUI", "DaylightMogul", "SkillUp", "SkillUp Forever",
   // Real addon names that are allowed to appear untranslated in a Chinese sentence.
   "Clique", "Bartender", "Blizzard", "ElvUI", "WeakAuras", "Details", "OmniCC", "Masque",
   // Keyboard labels are shown in uppercase by the game.
@@ -110,11 +132,10 @@ const UI_ACTION_WORDS = new Set([
 // (240 x 60), channel tags ([1. G]), and the like. They count as allowed
 // words, not as untranslated English.
 const MIXED_ASCII_WORDS = new Set([
-  'q', 'ilvl', 'x', 'g', 't', 'p', 's', 'y', 'w', 'c', 'a', 'z', 'n',
-  'boe', 'bou', 'set', 'h', 'm', 'k', 'id', 'frame', 'npcs', 'npc',
-  'up', 'down', 'left', 'right', 'zoom', 'in', 'out', 'shift',
-  'ctrl', 'alt', 'esc', 'del', 'ins', 'tab', '1k', '2k', '3k', '4k',
-  '5k', '6k', '7k', '8k', '9k',
+  'q', 'ilvl', 'x', 'g', 't', 'p', 's', 'y', 'w', 'c', 'a', 'z', 'n', 'boe', 'bou',
+  'set', 'h', 'm', 'k', 'id', 'frame', 'npcs', 'npc', 'up', 'down', 'left', 'right',
+  'zoom', 'in', 'out', 'shift', 'ctrl', 'alt', 'esc', 'del', 'ins', 'tab', '1c',
+  '1k', '2k', '3k', '4k', '5k', '6k', '7k', '8k', '9k',
 ]);
 
 // These are vocabulary values in a technical enum, not prose. They are
@@ -130,7 +151,7 @@ function stripCommandsAndCode(value) {
     // Remove a command and its ASCII arguments; the rest of the sentence is
     // still checked, so text after a command is not silently skipped.
     .replace(/\/[A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z0-9_%<>=|.-]+)*/g, "")
-    .replace(/[/_.[\]{}()<>:=+*\-：、，。；！？（）【】《》〈〉“”‘’…—]+/g, " ")
+    .replace(/[/_.\[\]{}()<>:=+*\-:、。；！？（）【】《》“”‘’…—]+/g, " ")
     .trim();
 }
 
@@ -153,12 +174,13 @@ function englishLeftover(key, value) {
   if (words.every((w) => ALLOWED_ENGLISH.has(w))) return false;
   // Proper names, slash commands and addon commands intentionally stay as written.
   if (String(key).startsWith("/") || String(value).startsWith("/")) return false;
-  if (/^Daylight UI\s*:/i.test(String(value))) return false;
+  if (/^Daylight UI\s*:/.test(String(value))) return false;
   if (/^[\w.-]+\.(?:png|tga|blp|ttf|otf)$/i.test(String(value))) return false;
   if (/^[A-Za-z0-9]+ PvP$/.test(String(value))) return false;
   if (/^skins profile\b/i.test(String(value))) return false;
   if (/^skins\s+[a-z]/i.test(String(value))) return false;
   if (/^(?:BFD|RFC|VC|DM|WC|SFK|RFK|ULD|ZF|ST|Mara|BRD|LBRS|UBRS|DME|DMN|DMW|Scholo|Strat|Live|UD|BRS|MC|BWL|AQ20|AQ40|NAXX|PSI|SSC|TK|BH|BT|SWP)$/i.test(String(value))) return false;
+
   // A value with Chinese must not still contain English. Two checks:
   // 1) three or more ordinary English words in a row means an untranslated
   //    sentence such as "types: gear, weapon, armor";
@@ -174,17 +196,8 @@ function englishLeftover(key, value) {
       !isAllowedTechnical(w) &&
       !UI_ACTION_WORDS.has(w.toLowerCase());
     const isKeywordPage = /\b(?:q>|ilvl>|boe\s*&|gear\s*,)/i.test(String(key));
-    // A sentence with Chinese is translated even when product names repeat:
-    // "Clique 已启用。Clique 继续..." must not look like an English run.
     const isBoundary = (w) => !isOrdinary(w);
-    // Count only pure-ASCII tokens. "Calm 小而缓慢" is one Han-mixed
-    // token, not English; a real leak is several English words in a row,
-    // like "gear, weapon, armor".
     const ascii = words.filter((w) => !hasHan(w));
-    // Three English-looking names in a translated sentence are usually
-    // brands repeated around Chinese, not a leaked English clause. A single
-    // UI action (Open/Save) is still rejected below.
-    // Repeated product names around Chinese are not a leaked English clause.
     if (ascii.length && words.some((w) => hasHan(w)) && ascii.every((w) => ALLOWED_ENGLISH.has(w) || MIXED_ASCII_WORDS.has(w.toLowerCase()) || isAllowedTechnical(w))) return false;
     let run = 0;
     let longest = 0;
@@ -193,17 +206,11 @@ function englishLeftover(key, value) {
       if (run > longest) longest = run;
     }
     if (longest >= 3 && !isKeywordPage) return true;
-    // "(by DaylightUI)" is short but still has an untranslated preposition.
-    // Ignore key/search tokens and technical in/out labels around it.
     const englishProse = ascii.filter((w) => !MIXED_ASCII_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w) && !isAllowedTechnical(w));
     if (englishProse.some((w) => /^(?:by|from|with|for|and|or|the|of)$/i.test(w))) return true;
     return words.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w));
   }
-  // An all-English value is never a translation unless it is one of the
-  // explicit product/command exceptions above. Treating a value equal to its
-  // key as reusable memory made one English leftover fail every scheduled run.
-  // All-English values are checked as a whole. A filename or a pure brand
-  // value is handled by the explicit exceptions above.
+
   return words.some((w) => w.length >= 2);
 }
 
@@ -235,6 +242,7 @@ function dedupe() {
   console.log(`Removed ${removed} duplicate locale entr${removed === 1 ? "y" : "ies"} (kept the last definition).`);
   return removed;
 }
+
 function report({ missingOnly = false } = {}) {
   const cat = catalog();
   const { entries, duplicates } = readLocale();
@@ -244,6 +252,7 @@ function report({ missingOnly = false } = {}) {
   const untranslatedValues = [...cat.keys()].filter((k) => entries.has(k) && englishLeftover(k, entries.get(k)));
   const english = untranslatedValues;
   const terminology = terminologyViolations(entries);
+
   console.log(`Current UI strings: ${cat.size}`);
   console.log(`zhCN entries: ${entries.size}`);
   console.log(`Missing keys: ${missing.length}`);
@@ -253,6 +262,7 @@ function report({ missingOnly = false } = {}) {
   console.log(`Duplicate keys: ${duplicates.length}`);
   console.log(`Format/empty errors: ${bad.length}`);
   console.log(`Terminology violations: ${terminology.length}`);
+
   if (duplicates.length) for (const k of duplicates) console.log(`  duplicate ${JSON.stringify(k)}`);
   if (bad.length) for (const [k, v] of bad.slice(0, 80)) console.log(`  invalid ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
   if (english.length && !missingOnly) for (const k of english) console.log(`  english ${JSON.stringify(k)} -> ${JSON.stringify(entries.get(k))}`);
@@ -263,58 +273,107 @@ function report({ missingOnly = false } = {}) {
     }
   }
   if (stale.length && !missingOnly && stale.length <= 80) for (const k of stale) console.log(`  removed ${JSON.stringify(k)}`);
+
   if (missing.length) {
     const out = path.join(root, "tools", "reports", "zhcn-missing.tsv");
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, missing.map((k) => `${JSON.stringify(k)}\t${cat.get(k).refs.join(",")}`).join("\n") + "\n", "utf8");
     console.log(`Report: ${path.relative(root, out)}`);
   }
+
   return { cat, entries, duplicates, missing, stale, bad, english, terminology };
 }
 
-// Locked glossary terms are checked without being made fatal yet. This gives
-// the PR validator and humans a visible warning list while the terminology set
-// is still being refined against merged/reviewed locale files.
+// High-precision multi-word or domain-specific terms that must also be enforced
+// inside longer sentences (using whole-term boundary matching and longest-match
+// masking so "General channel" does not trigger "General").
+const PROSE_LOCKED_TERMS = new Set([
+  "usual price", "buyout", "deposit", "undercut", "full scan", "price memory",
+  "auction length", "deal price", "loot rolls", "pick ticks", "roll bars",
+  "flight timer", "welcome on landing", "landing welcome", "flight point",
+  "swing timer", "main hand bar", "off hand bar", "ranged bar", "power bar",
+  "power text", "personal display", "own angle", "fight pill", "full card key",
+  "portrait look", "portrait ring", "set into the frame", "micro menu",
+  "layer flattening", "auction house", "cast bar", "cast bars", "nameplates",
+  "unit frames", "combat text", "scrolling combat text", "minimap", "tooltip",
+  "critical strike", "rogue", "air totem", "earth totem", "fire totem",
+  "water totem", "general channel",
+]);
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function termBoundary(term) {
+  const escaped = escapeRegExp(term);
+  return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "ig");
+}
+
+// Locked glossary terms are checked across both exact keys and prose sentences.
+// Reviewed overrides take precedence so intentional exceptions never false-alarm.
 function terminologyViolations(entries) {
   let glossary;
   try {
     glossary = readGlossary();
   } catch (e) {
-    return [{ key: '<glossary>', value: e.message, expected: 'valid JSON glossary' }];
+    return [{ key: "<glossary>", value: e.message, expected: "valid JSON glossary" }];
   }
+  const overrides = readReviewedOverrides();
   const violations = [];
   const straighten = (s) => String(s)
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
-    .replace(/\s+/g, ' ')
+    .replace(/\s+/g, " ")
     .trim();
-  // A glossary term is a vocabulary lock for its exact key. For longer keys,
-  // only standalone terms in prose are checked; hidden substrings such as
-  // Debuff or Durability and verbs such as "needs" must not create false alarms.
-  const termBoundary = term => {
-    const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp('(^|[\\s/>:_-])' + escaped + '(?=$|[\\s/>:_-])', 'i');
-  };
   const hasRemainder = (actual, term) => {
     const simple = /^[A-Za-z][A-Za-z -]*$/.test(term);
     if (!simple) return false;
     const words = term.toLowerCase().split(/\s+/).filter(Boolean);
-    return words.every((word) => new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i').test(actual));
+    return words.every((word) => new RegExp("\\b" + escapeRegExp(word) + "\\b", "i").test(actual));
   };
+
+  // 1) Exact-key check for every glossary entry with Chinese target.
   for (const [term, expectedRaw] of Object.entries(glossary)) {
     const expected = straighten(expectedRaw);
     if (!hasHan(expected)) continue;
     if (!entries.has(term)) continue;
-    const rawActual = String(entries.get(term) || '');
+    if (Object.prototype.hasOwnProperty.call(overrides, term)) continue;
+    const rawActual = String(entries.get(term) || "");
     const actual = straighten(rawActual);
-    if (actual === expected) {
-      continue;
-    }
-    const exactTermLookup = Object.prototype.hasOwnProperty.call(glossary, term);
-    if ((exactTermLookup && !actual.includes(expected)) || (!exactTermLookup && !actual.includes(expected))) {
-      violations.push({ key: term, value: rawActual, expected: expectedRaw });
+    if (actual === expected) continue;
+    if (!actual.includes(expected)) {
+      violations.push({ key: term, term, value: rawActual, expected: expectedRaw });
     } else if (hasRemainder(actual, term)) {
-      violations.push({ key: term, value: rawActual, expected: expectedRaw + ' (no English remainder)' });
+      violations.push({ key: term, term, value: rawActual, expected: expectedRaw + " (no English remainder)" });
+    }
+  }
+
+  // 2) Prose scan for high-precision domain terms, sorted longest-first so a
+  //    longer phrase masks its sub-phrases on the same text span.
+  const proseRules = [];
+  const seenLower = new Set();
+  for (const [term, expectedRaw] of Object.entries(glossary)) {
+    const lower = term.toLowerCase();
+    const expected = straighten(expectedRaw);
+    if (!hasHan(expected) || !PROSE_LOCKED_TERMS.has(lower) || seenLower.has(lower)) continue;
+    seenLower.add(lower);
+    proseRules.push({ term, expected, expectedRaw, re: termBoundary(term) });
+  }
+  proseRules.sort((a, b) => b.term.length - a.term.length);
+
+  for (const [key, rawActual] of entries.entries()) {
+    if (Object.prototype.hasOwnProperty.call(glossary, key)) continue;
+    if (Object.prototype.hasOwnProperty.call(overrides, key)) continue;
+    const actual = straighten(rawActual || "");
+    if (!actual) continue;
+    let maskedKey = String(key);
+    for (const rule of proseRules) {
+      rule.re.lastIndex = 0;
+      if (!rule.re.test(maskedKey)) continue;
+      maskedKey = maskedKey.replace(rule.re, (m) => " ".repeat(m.length));
+      if (!actual.includes(rule.expected)) {
+        violations.push({ key, term: rule.term, value: rawActual, expected: rule.expectedRaw });
+      }
     }
   }
   return violations;
@@ -341,6 +400,15 @@ function prune() {
   return removed;
 }
 
+function appendMoreLinesMarker(text) {
+  const marker = "-- More translated lines.";
+  let out = text.replace(/\n?$/, "\n");
+  if (!out.includes(marker)) {
+    out += "\n" + marker + "\n";
+  }
+  return out;
+}
+
 function applyData(data, label, opts = {}) {
   const { src, entries } = readLocale();
   const toApply = Object.entries(data).filter(([k]) => opts.replace || !entries.has(k));
@@ -350,19 +418,24 @@ function applyData(data, label, opts = {}) {
     for (const [k, v] of bad.slice(0, 40)) console.error(`  ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
     process.exit(1);
   }
+
   let out = src.replace(/\n?$/, "\n");
   for (const [k, v] of toApply) {
     if (!entries.has(k)) continue;
-    const quoted = luaQuote(k).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const quoted = escapeRegExp(luaQuote(k));
     const lineRe = new RegExp("^L\\[" + quoted + "\\]\\s*=\\s*\"(?:\\\\.|[^\"\\\\])*\"\\s*$", "m");
-    out = out.replace(lineRe, `L[${luaQuote(k)}] = ${luaQuote(v)}`);
+    // Use a replacement callback so '$' sequences in translations are never
+    // interpreted as RegExp replacement tokens ($&, $$, $1, etc.).
+    out = out.replace(lineRe, () => `L[${luaQuote(k)}] = ${luaQuote(v)}`);
   }
+
   const toAdd = toApply.filter(([k]) => !entries.has(k));
   if (toAdd.length) {
-    out += "\n-- More translated lines.\n";
+    out = appendMoreLinesMarker(out);
     out += toAdd.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       .map(([k, v]) => `L[${luaQuote(k)}] = ${luaQuote(v)}`).join("\n") + "\n";
   }
+
   fs.writeFileSync(localePath, out, "utf8");
   console.log(`Added ${toAdd.length} entries; ${toApply.length - toAdd.length} replaced.`);
   return toApply.length;
@@ -393,13 +466,13 @@ function baseline(file) {
     console.log("Baseline adds no new entries; the author file is unchanged.");
     return 0;
   }
-  let text = src.replace(/\n?$/, "\n");
-  text += "\n-- More translated lines.\n";
+  let text = appendMoreLinesMarker(src);
   text += additions.map(([key, value]) => "L[" + luaQuote(key) + "] = " + luaQuote(value)).join("\n") + "\n";
   fs.writeFileSync(localePath, text, "utf8");
   console.log("Baseline appended " + additions.length + " new entries; existing file kept byte-for-byte.");
   return additions.length;
 }
+
 function parseLocaleFile(file) {
   const src = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
   const entries = new Map();
@@ -431,9 +504,9 @@ function sync(file) {
   const { cat, entries } = report({ missingOnly: true });
   const allowed = new Set(cat.keys());
   const data = {};
-  for (const [key, baseline] of from) {
+  for (const [key, baselineVal] of from) {
     if (!allowed.has(key)) continue;
-    if (!validTranslation(key, entries.get(key))) data[key] = baseline;
+    if (!validTranslation(key, entries.get(key))) data[key] = baselineVal;
   }
   applyData(data, "synced " + path.basename(source), { replace: true });
   prune();
@@ -449,6 +522,7 @@ function override(file) {
   applyData(reviewed, "overrides " + path.basename(file), { replace: true });
   report();
 }
+
 function apply(file) {
   const data = JSON.parse(fs.readFileSync(path.resolve(root, file || ""), "utf8"));
   applyData(data, path.basename(file));
@@ -483,22 +557,22 @@ function translationMemory(entries) {
   const approx = new Map();
   for (const [k, v] of entries) {
     const n = normal(k);
-    if (!approx.has(n)) approx.set(n, v);
+    if (!approx.has(n)) approx.set(n, { key: k, value: v });
   }
   return { exact, approx };
 }
 
 function readGlossary() {
-  const glossaryPath = path.join(toolRoot, 'tools', 'zhcn-glossary.json');
-  if (!fs.existsSync(glossaryPath)) throw new Error('zhCN glossary is missing: ' + glossaryPath);
+  const glossaryPath = path.join(toolRoot, "tools", "zhcn-glossary.json");
+  if (!fs.existsSync(glossaryPath)) throw new Error("zhCN glossary is missing: " + glossaryPath);
   let glossary;
   try {
-    glossary = JSON.parse(fs.readFileSync(glossaryPath, 'utf8'));
+    glossary = JSON.parse(fs.readFileSync(glossaryPath, "utf8"));
   } catch (e) {
-    throw new Error('zhCN glossary is invalid JSON: ' + glossaryPath + ': ' + e.message);
+    throw new Error("zhCN glossary is invalid JSON: " + glossaryPath + ": " + e.message);
   }
-  if (!glossary || typeof glossary !== 'object' || Array.isArray(glossary) || !Object.keys(glossary).length) {
-    throw new Error('zhCN glossary must be a non-empty JSON object: ' + glossaryPath);
+  if (!glossary || typeof glossary !== "object" || Array.isArray(glossary) || !Object.keys(glossary).length) {
+    throw new Error("zhCN glossary must be a non-empty JSON object: " + glossaryPath);
   }
   return glossary;
 }
@@ -507,10 +581,10 @@ function readReviewedOverrides() {
   // Exact reviewed translations are the highest priority source. The workflow
   // applies this file before translating, and every model path re-applies it
   // afterward so a model can never downgrade a vetted line.
-  const file = path.join(toolRoot, 'tools', 'zhcn-overrides.json');
+  const file = path.join(toolRoot, "tools", "zhcn-overrides.json");
   if (!fs.existsSync(file)) return {};
-  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  const data = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
   return data;
 }
 
@@ -519,11 +593,11 @@ function enforceReviewedOverrides(data, allowedKeys) {
   let locked = 0;
   for (const [key, value] of Object.entries(overrides)) {
     if (!allowedKeys.has(key)) continue;
-    if (typeof value !== 'string' || !value.trim()) continue;
+    if (typeof value !== "string" || !value.trim()) continue;
     data[key] = value;
     locked++;
   }
-  if (locked) console.log(`Reviewed override lock: ${locked} entr${locked === 1 ? 'y' : 'ies'}`);
+  if (locked) console.log(`Reviewed override lock: ${locked} entr${locked === 1 ? "y" : "ies"}`);
   return data;
 }
 
@@ -532,14 +606,14 @@ function retryable(error) {
 }
 
 function requestModel() {
-  return process.env.OPENAI_MODEL || 'deepseek-v4.1-flash';
+  return process.env.OPENAI_MODEL || "deepseek-v4.1-flash";
 }
 
 function reviewModels() {
   const configured = [
-    process.env.ZHCN_REVIEW_MODEL || 'deepseek-v4.1-flash',
-    process.env.ZHCN_REVIEW_FALLBACK_MODEL || 'deepseek-v4.1-flash',
-    process.env.ZHCN_REVIEW_LAST_MODEL || 'deepseek-v4.1-flash',
+    process.env.ZHCN_REVIEW_MODEL || "deepseek-v4.1-flash",
+    process.env.ZHCN_REVIEW_FALLBACK_MODEL || "deepseek-v4.1-flash",
+    process.env.ZHCN_REVIEW_LAST_MODEL || "deepseek-v4.1-flash",
     requestModel(),
   ];
   return [...new Set(configured.filter(Boolean))];
@@ -550,37 +624,39 @@ function reviewModel() {
 }
 
 function batchSize() {
-  return integerEnv('ZHCN_BATCH_SIZE', 12, 1);
+  return integerEnv("ZHCN_BATCH_SIZE", 12, 1);
 }
 
 function contextWindow() {
-  return integerEnv('ZHCN_CONTEXT_LINES', 6, 0);
+  return integerEnv("ZHCN_CONTEXT_LINES", 6, 0);
+}
+
+function requestTemperature() {
+  const raw = process.env.AI_TEMPERATURE;
+  if (raw == null || raw === "") return 0.15;
+  const val = Number(raw);
+  return Number.isFinite(val) && val >= 0 && val <= 2 ? val : 0.15;
 }
 
 function highRisk(key, ref) {
   const text = String(key);
   const holes = (text.match(/%(?:%|[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g) || []).length;
   const clauses = (text.match(/[.;:!?]|\b(?:and|or|but|if|when|while|unless|before|after)\b/gi) || []).length;
-  const moduleName = String(ref || '').split(/[/:]/)[0];
-  // A tooltip/API error whose vocabulary is a fixed enum is easy for a model
-  // to translate as prose; those English values must be preserved exactly.
+  const moduleName = String(ref || "").split(/[/:]/)[0];
   const technicalEnum = /\bkind\s*\([^)]*\b(?:unit|item|spell|world|compare)\b/i.test(text);
   const commandHeavy = /^\/[A-Za-z]/.test(text) && (/--/.test(text) || clauses >= 1 || text.length >= 40);
-  // Loot-roll "pass" means "give up the roll", not "succeed". These short
-  // strings are deceptively risky and were wrong in an earlier automated pass.
-  const rollPassContext = /\b(?:passed|roll|rolled|rolling|need|greed)\b/i.test(text)
-    || /\bpassed\b/i.test(String(ref || ''));
-  return text.length >= 80 || holes >= 2 || clauses >= 2
-    || /(?:^|[/_-])(?:new|unreleased)(?:[/_.-]|$)/i.test(moduleName)
-    || technicalEnum || commandHeavy || rollPassContext;
+  // Short domain-sensitive terms frequently mistranslated out of context.
+  const domainSensitive = /\b(?:passed|pass|roll|rolled|rolling|need|greed|post|posted|posting|buyout|deal|undercut|pill|ring|ticks|flight|landing|swing|usual)\b/i.test(text)
+    || /\bpassed\b/i.test(String(ref || ""));
+  return text.length >= 80 || holes >= 2 || clauses >= 2 || /(?:^|[/_-])(?:new|unreleased)(?:[/_.-]|$)/i.test(moduleName) || technicalEnum || commandHeavy || domainSensitive;
 }
 
 function nearbyContext(cat, key, refs) {
   const window = contextWindow();
   if (!window) return [];
-  const anchor = String((refs && refs[0]) || '');
+  const anchor = String((refs && refs[0]) || "");
   if (!anchor) return [];
-  const file = anchor.replace(/:\d+$/, '');
+  const file = anchor.replace(/:\d+$/, "");
   const line = Number((anchor.match(/:(\d+)$/) || [])[1] || 0);
   if (!file || !line) return [];
   const rows = [];
@@ -621,90 +697,111 @@ function clearCheckpoint() {
   try { fs.rmSync(checkpointPath, { force: true }); } catch (e) {}
 }
 
+function parseModelJson(responseText, singleKey = null) {
+  let content;
+  try {
+    const data = JSON.parse(responseText);
+    content = String(data.choices[0].message.content || "").trim();
+  } catch (e) {
+    throw Object.assign(new Error("AI returned unreadable response wrapper: " + String(responseText).slice(0, 1000)), { outputError: true });
+  }
+  const stripped = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  let candidate = stripped;
+  const first = candidate.indexOf("{");
+  const last = candidate.lastIndexOf("}");
+  if (first >= 0 && last > first) candidate = candidate.slice(first, last + 1);
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  if (singleKey !== null && stripped && !stripped.startsWith("{")) {
+    return { [singleKey]: stripped };
+  }
+  throw Object.assign(new Error("AI returned invalid JSON: " + String(responseText).slice(0, 1000)), { outputError: true });
+}
+
+function buildSystemPrompt(glossary, opts = {}) {
+  const baseRules = [
+    "You translate World of Warcraft addon UI text (DaylightUI) from English to Simplified Chinese (zhCN).",
+    "Return ONLY a valid JSON object mapping every input original_english key to its Simplified Chinese string; no markdown fences or extra commentary.",
+    "Preserve every printf placeholder (%s, %d, %.1f, %02d, %%) and WoW color/texture code (|cAARRGGBB, |r, |T...|t) in the EXACT same count and order (do not rewrite as %1$s because LuaJIT tests run against standard format).",
+    "While keeping placeholder order unchanged, structure the Chinese sentence naturally so each %s/%d refers to the exact same semantic role as in English (e.g. 'put up %s at %s' -> '上架了 %s，单价 %s', never swap item and price).",
+    "Preserve exact leading and trailing whitespace of original_english (e.g. ' You passed.' -> ' 你已放弃。').",
+    "Use natural, concise mainland Chinese World of Warcraft UI wording, full-width Chinese punctuation (，。：（）“”), ASCII ellipsis (...), and consistent terminology across both short labels and long descriptions.",
+    "Domain disambiguation rules:",
+    "- Auction House: Post=上架 (never 邮寄), Buyout=一口价 (never 直购价), Deposit=保管费, Undercut=压价, Undercut by (setting)=压价幅度, Deal price=优惠价阈值 (never 成交价), Usual price=常规价格 (never mix 通常/常见/平时).",
+    "- Loot Rolls: Need=需求, Greed=贪婪, Pass=放弃 (never 通过), Pick ticks=选择标记 (never 跳数), With one roll=单个掷骰时.",
+    "- UI & Bars: Fight pill=战斗胶囊 (never 药丸), portrait ring=头像环 (never 光环), Flight timer=飞行计时器, Welcome on landing=抵达欢迎, Swing timer=攻击计时条, Power bar=资源条, bar=计量条/计时条 (never 动作条 unless English says action bar), handle=控制柄.",
+    "- Totems: Air totem=空气图腾, Earth totem=大地图腾, Fire totem=火焰图腾, Water totem=水之图腾.",
+    "Keep PvP, PvE, RP, DPS, HPS, NPC, UI, addon names (Raider.IO, Auctionator, TSM, Questie, etc.), slash commands, font names, URLs and code identifiers in English.",
+    "Exact reviewed entries in approved_translation_memory outrank guesses. Use source_location and nearby_ui_text to disambiguate short UI labels; never return them as translations.",
+  ];
+
+  if (opts.review) {
+    baseRules.unshift(
+      "You are the senior Simplified Chinese reviewer for DaylightUI. Each item includes original_english, source_location, nearby_ui_text, and draft_zhCN. Review draft_zhCN carefully: fix any out-of-context mistranslations, swapped placeholder semantics, glossary inconsistencies, or missing leading/trailing spaces; keep accurate drafts intact."
+    );
+  }
+
+  if (opts.feedback) {
+    baseRules.push("A previous validated attempt failed: " + opts.feedback);
+    baseRules.push("Correct that exact problem and return the full JSON object again.");
+  }
+
+  baseRules.push("Required glossary: " + JSON.stringify(glossary));
+  return baseRules.join("\n");
+}
+
 async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
   const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
-  if (!key) throw new Error('Repository secret API_KEY is not set');
-  const base = (process.env.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1').replace(/\/$/, '');
+  if (!key) throw new Error("Repository secret API_KEY is not set");
+  const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
   const model = opts.model || (opts.review ? reviewModel() : requestModel());
   const context = relatedMemory(memory, batch);
   const glossary = readGlossary();
-  const system = [
-    'You translate World of Warcraft addon UI text from English to Simplified Chinese.',
-    'Return only a JSON object mapping every input key to a Chinese string; no markdown.',
-    'Preserve every printf placeholder exactly: %s, %d, %.0f, %.2f, %%.',
-    'Preserve color and texture codes exactly: |cAARRGGBB, |r, |T...|t.',
-    'Use concise, natural mainland Chinese UI language in the style of the Simplified Chinese World of Warcraft client: short UI labels, no translationese, and official-sounding wording for combat, bags, bars, quests and social text.',
-    'Match the reviewed tone of the #138 auction-house and loot-roll strings: conversational but compact, use 常规价格 for usual price, 拍卖行 for Auction House, 一口价 for buyout, 上架 for post, 在售 for up, 背包 for bags, 邮箱 for mailbox, 金币 for gold, 掷骰 for roll, 拾取掷骰 for loot roll, 施法条 for cast bar, 姓名板 for nameplate, and 鼠标提示 for tooltip.',
-    'Use these approved terms: 爆击, 微缩地图, 鼠标提示, 潜行者, 常规, 密语, 伤害统计条图标, 浮动战斗信息, 拾取, 施法条, 姓名板, 单位框体, 小队, 团队, 公会, 战场, 竞技场.',
-    'Keep PvP, PvE, RP, DPS, HPS, NPC, UI and addon names in English.',
-    'Do not translate slash commands, setting keys, font names, URLs or code identifiers.',
-    'If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.',
-    'Exact reviewed entries in the approved translation memory must be kept verbatim; they outrank glossary guesses and model style.',
-    'In loot-roll context, pass/passed means give up the roll: Pass=放弃, You passed.=你已放弃., Time ran out, so you passed.=时间耗尽，你已放弃., Everyone passed.=所有人都放弃了.; never translate these as 通过.',
-    'Use the supplied reviewed pairs as translation memory for terminology.',
-    ...(opts.feedback ? ['A previous validated attempt failed: ' + opts.feedback, 'Correct that exact problem and return the full JSON object again.'] : []),
-    'Use nearby_ui_text only to keep the same terminology and tone; never return it as a translation.',
-    'Each requested row has original_english, source_location and nearby_ui_text. Translate original_english; source_location is only a file reference and must never be returned as a translation.',
-    'Required glossary: ' + JSON.stringify(glossary),
-  ].join(' ');
-  const requested = batch.map(([original_english, source_location, nearby_ui_text]) => ({ original_english, source_location, nearby_ui_text: nearby_ui_text || [] }));
+  const system = buildSystemPrompt(glossary, opts);
+  const requested = batch.map(([original_english, source_location, nearby_ui_text, draft_zhCN]) => {
+    const row = { original_english, source_location, nearby_ui_text: nearby_ui_text || [] };
+    if (opts.review && typeof draft_zhCN === "string" && draft_zhCN) {
+      row.draft_zhCN = draft_zhCN;
+    }
+    return row;
+  });
   const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: requested }, null, 2);
+  const payload = {
+    model,
+    temperature: requestTemperature(),
+    messages: [{ role: "system", content: system }, { role: "user", content: user }],
+  };
+  if (process.env.AI_JSON_MODE === "true") {
+    payload.response_format = { type: "json_object" };
+  }
   let res;
   try {
-    res = await fetchImpl(base + '/chat/completions', {
+    res = await fetchImpl(base + "/chat/completions", {
       signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-    }),
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      body: JSON.stringify(payload),
     });
   } catch (e) {
-    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) e.timeout = true;
+    if (e && (e.name === "TimeoutError" || e.name === "AbortError")) e.timeout = true;
     throw e;
   }
   const text = await res.text();
   if (!res.ok) {
-    const error = new Error('AI request failed (' + res.status + '): ' + text.slice(0, 1000));
+    const error = new Error("AI request failed (" + res.status + "): " + text.slice(0, 1000));
     error.status = res.status;
     throw error;
   }
-  let parsed;
-  try {
-    const data = JSON.parse(text);
-    let content = data.choices[0].message.content.trim();
-    content = content.replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/, '');
-    const first = content.indexOf('{');
-    const last = content.lastIndexOf('}');
-    if (first >= 0 && last > first) content = content.slice(first, last + 1);
-    parsed = JSON.parse(content);
-  } catch (e) {
-    // Some models answer a one-string request with the translated string
-    // itself instead of a JSON object. Accept that only for a single row;
-    // multi-row requests still require the complete key mapping.
-    if (batch.length === 1) {
-      try {
-        const data = JSON.parse(text);
-        const content = data.choices[0].message.content.trim();
-        parsed = { [batch[0][0]]: content };
-      } catch (_) {
-        throw Object.assign(new Error('AI returned invalid JSON: ' + text.slice(0, 1000)), { outputError: true });
-      }
-    } else {
-      throw Object.assign(new Error('AI returned invalid JSON: ' + text.slice(0, 1000)), { outputError: true });
-    }
-  }
+  const parsed = parseModelJson(text, batch.length === 1 ? batch[0][0] : null);
   const out = {};
   for (const [k] of batch) {
     let v = parsed[k];
-    if ((typeof v !== 'string' || !v.trim()) && batch.length === 1) {
+    if ((typeof v !== "string" || !v.trim()) && batch.length === 1) {
       const values = Object.entries(parsed).filter(
-        ([, item]) => typeof item === 'string' && item.trim(),
+        ([, item]) => typeof item === "string" && item.trim(),
       );
-      // A one-string reply is safe only when it is keyed for this row (or a
-      // normalized match). A translation returned under a different key must
-      // never be silently assigned to this source string.
       if (
         values.length === 1 &&
         (values[0][0] === k || normal(values[0][0]) === normal(k))
@@ -712,11 +809,12 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
         v = values[0][1];
       }
     }
-    if (typeof v !== 'string' || !v.trim()) throw Object.assign(new Error('AI omitted: ' + JSON.stringify(k) + '; returned keys: ' + JSON.stringify(Object.keys(parsed))), { outputError: true });
-    if (v.includes('\uFFFD')) throw Object.assign(new Error('AI returned a replacement character: ' + JSON.stringify(k)), { outputError: true });
-    if (!formatOk(k, v)) throw Object.assign(new Error('Placeholder mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
-    if (!codesOk(k, v)) throw Object.assign(new Error('Color/texture code mismatch: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
-    if (englishLeftover(k, v)) throw Object.assign(new Error('AI left the string in English: ' + JSON.stringify(k) + ' -> ' + JSON.stringify(v)), { outputError: true });
+    if (typeof v !== "string" || !v.trim()) throw Object.assign(new Error("AI omitted: " + JSON.stringify(k) + "; returned keys: " + JSON.stringify(Object.keys(parsed))), { outputError: true });
+    if (v.includes("\uFFFD")) throw Object.assign(new Error("AI returned a replacement character: " + JSON.stringify(k)), { outputError: true });
+    if (!formatOk(k, v)) throw Object.assign(new Error("Placeholder mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
+    if (!codesOk(k, v)) throw Object.assign(new Error("Color/texture code mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
+    if (!edgeSpacesMatch(k, v)) throw Object.assign(new Error("Leading/trailing space mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
+    if (englishLeftover(k, v)) throw Object.assign(new Error("AI left the string in English: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
     out[k] = v;
   }
   return out;
@@ -724,17 +822,17 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
 
 function integerEnv(name, fallback, minimum) {
   const raw = process.env[name];
-  if (raw == null || raw === '') return fallback;
+  if (raw == null || raw === "") return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < minimum) {
-    throw new Error(name + ' must be an integer >= ' + minimum);
+    throw new Error(name + " must be an integer >= " + minimum);
   }
   return value;
 }
 
 async function requestBatch(batch, memory, opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
-  const tries = opts.retries || integerEnv('AI_RETRIES', 3, 1);
+  const tries = opts.retries || integerEnv("AI_RETRIES", 3, 1);
   const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   let last;
   for (let attempt = 1; attempt <= tries; attempt++) {
@@ -744,31 +842,25 @@ async function requestBatch(batch, memory, opts = {}) {
       last = e;
       if (e.outputError) break;
       const canRetry = retryable(e);
-      const message = 'AI batch attempt ' + attempt + '/' + tries + ' failed: ' + (e.message || e);
+      const message = "AI batch attempt " + attempt + "/" + tries + " failed: " + (e.message || e);
       console.error(message);
-      console.log('::error::' + message);
+      console.log("::error::" + message);
       if (!canRetry || attempt === tries) break;
-      const delay = Math.min(30000, integerEnv('AI_RETRY_BASE_MS', 1500, 0) * (2 ** (attempt - 1)));
-      console.error('Retrying in ' + delay + 'ms');
+      const delay = Math.min(30000, integerEnv("AI_RETRY_BASE_MS", 1500, 0) * (2 ** (attempt - 1)));
+      console.error("Retrying in " + delay + "ms");
       await wait(delay);
     }
   }
-  // Model-output problems (malformed JSON, an omitted key, a placeholder error,
-  // an English sentence or a replacement character) can be isolated to one
-  // string. Split the batch once so one awkward line does not block the rest.
   if (last && last.outputError && batch.length > 1) {
-    console.error('Retrying the failed batch one string at a time.');
+    console.error("Retrying the failed batch one string at a time.");
     const out = {};
     const failed = [];
     for (const row of batch) {
-      try {
-        Object.assign(out, await requestBatch([row], memory, { ...opts, retries: tries, wait }));
-      } catch (e) {
-        failed.push({ key: row[0], error: e.message || String(e) });
-      }
+      try { Object.assign(out, await requestBatch([row], memory, { ...opts, retries: tries, wait })); }
+      catch (e) { failed.push({ key: row[0], error: e.message || String(e) }); }
     }
     if (!failed.length) return out;
-    const error = new Error('AI failed for ' + failed.length + ' of ' + batch.length + ' strings: ' + failed.map((x) => JSON.stringify(x.key)).join(', '));
+    const error = new Error("AI failed for " + failed.length + " of " + batch.length + " strings: " + failed.map((x) => JSON.stringify(x.key)).join(", "));
     error.outputError = true;
     error.translations = out;
     error.failedKeys = failed.map((x) => x.key);
@@ -776,7 +868,7 @@ async function requestBatch(batch, memory, opts = {}) {
   }
   if (last && last.outputError) throw last;
   if (last && !retryable(last)) throw last;
-  const deferred = new Error('AI batch failed after ' + tries + ' attempts: ' + (last && (last.message || last)));
+  const deferred = new Error("AI batch failed after " + tries + " attempts: " + (last && (last.message || last)));
   deferred.deferred = true;
   deferred.retryable = true;
   if (last) {
@@ -786,35 +878,40 @@ async function requestBatch(batch, memory, opts = {}) {
   throw deferred;
 }
 
-async function translate() {
+async function translate(opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const { cat, entries, english } = report({ missingOnly: true });
   const missing = [...new Set([
     ...[...cat.keys()].filter((k) => !entries.has(k)),
     ...english,
   ])];
   if (!missing.length) return;
+
   const memory = translationMemory(entries);
   const checkpoint = readCheckpoint();
   const result = {};
   for (const k of missing) {
     const saved = checkpoint.translations[k];
     const hit = memory.approx.get(normal(k));
-    // Never reuse an English value (including the key itself) as a translation.
-    // Otherwise translate() calls no model at all and fails every scheduled run.
-    if (saved && validTranslation(k, saved)) result[k] = saved;
-    else if (hit && validTranslation(k, hit)) result[k] = hit;
+    if (saved && validTranslation(k, saved)) {
+      result[k] = saved;
+    } else if (hit && sameEdgeFormat(k, hit.key) && validTranslation(k, hit.value)) {
+      result[k] = hit.value;
+    }
   }
   writeCheckpoint(result);
+
   const remaining = missing.filter((k) => !(k in result));
   console.log(`Translation memory reused: ${missing.length - remaining.length}`);
   console.log(`AI translation needed: ${remaining.length}`);
+
   const size = batchSize();
   const failed = [];
   for (let i = 0; i < remaining.length; i += size) {
     const batch = remaining.slice(i, i + size).map((k) => [k, cat.get(k).refs.slice(0, 3).join(", "), nearbyContext(cat, k, cat.get(k).refs)]);
     console.log(`AI batch ${i / size + 1}/${Math.ceil(remaining.length / size)} (${batch.length} strings)`);
     try {
-      Object.assign(result, await requestBatch(batch, memory));
+      Object.assign(result, await requestBatch(batch, memory, { fetchImpl }));
       writeCheckpoint(result);
     } catch (e) {
       console.error(`AI batch ${i / size + 1} still failed: ${e.message || e}`);
@@ -825,7 +922,7 @@ async function translate() {
       let repaired = {};
       if (retryRows.length) {
         try {
-          repaired = await requestBatch(retryRows, translationMemory(new Map([...entries, ...Object.entries(result)])), { feedback: String(e.message || e) });
+          repaired = await requestBatch(retryRows, translationMemory(new Map([...entries, ...Object.entries(result)])), { fetchImpl, feedback: String(e.message || e) });
           Object.assign(result, repaired);
           writeCheckpoint(result);
         } catch (repairError) {
@@ -847,66 +944,74 @@ async function translate() {
       }
     }
   }
+
   if (failed.length) {
     const deferred = failed.filter((item) => item.deferred).length;
-    const reportPath = path.join(root, 'tools', 'reports', 'zhcn-ai.json');
+    const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, JSON.stringify({
-      status: deferred === failed.length ? 'deferred' : 'failed',
+      status: deferred === failed.length ? "deferred" : "failed",
       translations: result,
       failed,
       reviewFailures: [],
-    }, null, 2) + '\n', 'utf8');
+    }, null, 2) + "\n", "utf8");
     if (deferred === failed.length) {
       console.error(`Translation deferred: ${deferred} temporary API failure(s). Progress checkpoint kept for the next run.`);
-      console.log('::notice::Translation deferred because of a temporary API issue; this run is not a translation-quality failure.');
+      console.log("::notice::Translation deferred because of a temporary API issue; this run is not a translation-quality failure.");
       process.exit(2);
     }
     console.error(`Translation incomplete: ${failed.length} AI failures (${deferred} deferred). Progress checkpoint kept for the next run.`);
     process.exit(1);
   }
 
-  // Second pass: only long, multi-placeholder or condition-heavy rows go to
-  // the review model. Ordinary short labels stay on the fast model.
-  const risky = remaining.filter((k) => highRisk(k, (cat.get(k).refs || [])[0]));
+  // Second pass (Draft-Review): send high-risk rows AND any rows flagged by
+  // terminologyViolations along with their first-pass draft for targeted review.
+  const preReviewMap = new Map(Object.entries(result));
+  const termViolationKeys = new Set(terminologyViolations(preReviewMap).map((item) => item.key));
+  const risky = remaining.filter((k) => highRisk(k, (cat.get(k).refs || [])[0]) || termViolationKeys.has(k));
   const reviewFailures = [];
-  if (risky.length && process.env.ZHCN_REVIEW !== 'false') {
+  if (risky.length && process.env.ZHCN_REVIEW !== "false") {
     const reviewMemory = translationMemory(new Map([...entries, ...Object.entries(result)]));
     const models = reviewModels();
-    const reviewBatchSize = integerEnv('ZHCN_REVIEW_BATCH_SIZE', 6, 1);
+    const reviewBatchSize = integerEnv("ZHCN_REVIEW_BATCH_SIZE", 6, 1);
     for (let i = 0; i < risky.length; i += reviewBatchSize) {
       const keys = risky.slice(i, i + reviewBatchSize);
-      const rows = keys.map((k) => [k, cat.get(k).refs.slice(0, 3).join(', '), nearbyContext(cat, k, cat.get(k).refs)]);
+      const rows = keys.map((k) => [
+        k,
+        cat.get(k).refs.slice(0, 3).join(", "),
+        nearbyContext(cat, k, cat.get(k).refs),
+        result[k],
+      ]);
       let reviewed;
       let lastError;
       for (const model of models) {
         try {
-          reviewed = await requestBatch(rows, reviewMemory, { review: true, model });
+          reviewed = await requestBatch(rows, reviewMemory, { fetchImpl, review: true, model });
           break;
         } catch (e) {
           lastError = e;
-          console.error('Review model ' + model + ' failed for batch ' + (i / reviewBatchSize + 1) + ': ' + (e.message || e));
+          console.error("Review model " + model + " failed for batch " + (i / reviewBatchSize + 1) + ": " + (e.message || e));
         }
       }
       if (reviewed) Object.assign(result, reviewed);
-      else for (const k of keys) reviewFailures.push({ key: k, error: String((lastError && lastError.message) || lastError || 'review omitted') });
+      else for (const k of keys) reviewFailures.push({ key: k, error: String((lastError && lastError.message) || lastError || "review omitted") });
     }
   }
-  console.log('High-risk strings reviewed: ' + risky.length + (reviewFailures.length ? ' (' + reviewFailures.length + ' failed)' : ''));
+  console.log("High-risk strings reviewed: " + risky.length + (reviewFailures.length ? " (" + reviewFailures.length + " failed)" : ""));
+
+  enforceReviewedOverrides(result, new Set(cat.keys()));
+  const terminology = terminologyViolations(new Map([...entries, ...Object.entries(result)]));
+
   const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, JSON.stringify({
-    status: 'success',
+    status: "success",
     translations: result,
     failed,
     reviewFailures,
     terminology,
   }, null, 2) + "\n", "utf8");
 
-  // Write the locale only after every batch succeeded, and run the strict
-  // check once more right before writing. A failed run leaves the file
-  // untouched, so a retry always starts from a clean base.
-  enforceReviewedOverrides(result, new Set(cat.keys()));
   applyData(result, "AI translation", { replace: true });
   const after = report();
   if (after.missing.length || after.english.length || after.bad.length || after.stale.length) {
@@ -935,7 +1040,47 @@ function writeConsensus(data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
 }
 
-async function translateConsensus() {
+async function judgeCandidates(judge, candidates, keys, fetchImpl = globalThis.fetch) {
+  const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("Repository secret API_KEY is not set");
+  const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
+  const glossary = readGlossary();
+  const prompt = [
+    {
+      role: "system",
+      content: [
+        "You are the senior Simplified Chinese reviewer for a World of Warcraft addon (DaylightUI).",
+        "Pick or merge the best translation for each English key.",
+        "Preserve every printf placeholder, color/texture code, and leading/trailing whitespace exactly.",
+        "Return ONLY a valid JSON object mapping each English key to the final Chinese string; no markdown.",
+        "Required glossary: " + JSON.stringify(glossary),
+      ].join("\n"),
+    },
+    { role: "user", content: JSON.stringify({ candidates }, null, 2) },
+  ];
+  const payload = { model: judge, temperature: requestTemperature(), messages: prompt };
+  if (process.env.AI_JSON_MODE === "true") {
+    payload.response_format = { type: "json_object" };
+  }
+  const res = await fetchImpl(base + "/chat/completions", {
+    signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Judge ${judge} failed (${res.status}): ${text.slice(0, 1000)}`);
+  const parsed = parseModelJson(text, keys.length === 1 ? keys[0] : null);
+  for (const k of keys) {
+    if (!validTranslation(k, parsed[k])) {
+      throw new Error("Judge returned an invalid translation for " + JSON.stringify(k));
+    }
+  }
+  return parsed;
+}
+
+async function translateConsensus(opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const { cat, entries } = report({ missingOnly: true });
   const missing = [...cat.keys()].filter((k) => !entries.has(k));
   if (!missing.length) {
@@ -961,35 +1106,11 @@ async function translateConsensus() {
     const candidates = {};
     for (const model of models) {
       console.log(`Consensus batch ${i / size + 1}/${total}: ${model}`);
-      try {
-        candidates[model] = await requestBatch(rows, memory, { model });
-      } catch (e) {
-        console.error(`Candidate ${model} failed: ${e.message || e}`);
-      }
+      try { candidates[model] = await requestBatch(rows, memory, { fetchImpl, model }); }
+      catch (e) { console.error(`Candidate ${model} failed: ${e.message || e}`); }
     }
     if (!Object.keys(candidates).length) throw new Error("Every consensus candidate failed for this batch");
-    const data = JSON.stringify(candidates, null, 2);
-    const prompt = [
-      { role: "system", content: "You are the senior Simplified Chinese reviewer for a World of Warcraft addon. Pick or merge the best translation for each English key. Preserve every printf placeholder and color code exactly. Return only JSON mapping each English key to the final Chinese string." },
-      { role: "user", content: JSON.stringify({ candidates: JSON.parse(data) }, null, 2) },
-    ];
-    const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
-    if (!key) throw new Error("Repository secret API_KEY is not set");
-    const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
-    const res = await fetch(base + "/chat/completions", {
-      signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
-      body: JSON.stringify({ model: judge, messages: prompt }),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Judge ${judge} failed (${res.status}): ${text.slice(0, 1000)}`);
-    const parsed = JSON.parse(JSON.parse(text).choices[0].message.content);
-    for (const k of keys) {
-      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || !codesOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
-        throw new Error("Judge returned an invalid translation for " + JSON.stringify(k));
-      }
-    }
+    const parsed = await judgeCandidates(judge, candidates, keys, fetchImpl);
     state.batches[id] = { complete: true, translations: parsed };
     writeConsensus(state);
   }
@@ -1005,6 +1126,7 @@ async function translateConsensus() {
   prune();
   console.log(`Consensus pass wrote ${Object.keys(final).length} entries.`);
 }
+
 function consensusAllFile() {
   return path.join(root, "tools", "reports", "zhcn-consensus-all.json");
 }
@@ -1023,7 +1145,8 @@ function writeConsensusAll(data) {
 
 // Rebuild every key through several models and a judge. Only this mode
 // retranslates text that the author already has. Progress is checkpointed.
-async function rebuildAll() {
+async function rebuildAll(opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const { cat } = report({ missingOnly: true });
   const keys = [...cat.keys()];
   const size = integerEnv("ZHCN_REBUILD_BATCH_SIZE", 10, 1);
@@ -1045,31 +1168,11 @@ async function rebuildAll() {
     const candidates = {};
     for (const model of models) {
       console.log(`Rebuild batch ${i / size + 1}/${total}: ${model}`);
-      try { candidates[model] = await requestBatch(rows, emptyMemory, { model }); }
+      try { candidates[model] = await requestBatch(rows, emptyMemory, { fetchImpl, model }); }
       catch (e) { console.error(`Candidate ${model} failed: ${e.message || e}`); }
     }
     if (!Object.keys(candidates).length) throw new Error("Every rebuild candidate failed for this batch");
-    const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
-    if (!key) throw new Error("Repository secret API_KEY is not set");
-    const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
-    const prompt = [
-      { role: "system", content: "You are the senior Simplified Chinese reviewer for a World of Warcraft addon. Pick or merge the best translation for each English key. Preserve every printf placeholder and color code exactly. Return only JSON mapping each English key to the final Chinese string." },
-      { role: "user", content: JSON.stringify({ candidates }, null, 2) },
-    ];
-    const res = await fetch(base + "/chat/completions", {
-      signal: AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 120000)),
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
-      body: JSON.stringify({ model: judge, messages: prompt }),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Judge ${judge} failed (${res.status}): ${text.slice(0, 1000)}`);
-    const parsed = JSON.parse(JSON.parse(text).choices[0].message.content);
-    for (const k of batchKeys) {
-      if (typeof parsed[k] !== "string" || !formatOk(k, parsed[k]) || !codesOk(k, parsed[k]) || englishLeftover(k, parsed[k])) {
-        throw new Error("Judge returned an invalid translation for " + JSON.stringify(k));
-      }
-    }
+    const parsed = await judgeCandidates(judge, candidates, batchKeys, fetchImpl);
     state.batches[id] = { complete: true, translations: parsed };
     writeConsensusAll(state);
   }
@@ -1086,6 +1189,7 @@ async function rebuildAll() {
   fs.writeFileSync(localePath, "-- Simplified Chinese (zhCN).\nlocal _, DUI = ...\nif DUI.LOCALE ~= \"zhCN\" then return end\nlocal L = DUI.L\n\n" + ordered.join("\n") + "\n", "utf8");
   report();
 }
+
 if (require.main === module) {
   const cmd = process.argv[2] || "check";
   if (cmd === "missing") report({ missingOnly: true });
@@ -1109,15 +1213,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint };
-
-
-
-
-
-
-
-
-
-
-
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt };
