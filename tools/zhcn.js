@@ -30,6 +30,10 @@ const { formatOk, specifiers, codesOk } = require(path.join(toolRoot, "tools", "
 
 const LOCALE_LINE = /^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/;
 
+const checkpointPath = process.env.ZHCN_CHECKPOINT
+  ? path.resolve(process.env.ZHCN_CHECKPOINT)
+  : path.join(root, ".zhcn-cache", "checkpoint.json");
+
 // One locale line, decoded with Lua's escaping rules. Keeping one parser means
 // check, sync, dedupe and apply cannot disagree about what the file contains.
 function localeLine(line) {
@@ -109,9 +113,13 @@ const MIXED_ASCII_WORDS = new Set([
   'q', 'ilvl', 'x', 'g', 't', 'p', 's', 'y', 'w', 'c', 'a', 'z', 'n',
   'boe', 'bou', 'set', 'h', 'm', 'k', 'id', 'frame', 'npcs', 'npc',
   'up', 'down', 'left', 'right', 'zoom', 'in', 'out', 'shift',
-  'ctrl', 'alt', 'esc', 'del', 'ins', 'tab', 'unit', 'item', 'spell', 'world', 'compare', 'kind', 'function', '1k', '2k', '3k', '4k',
+  'ctrl', 'alt', 'esc', 'del', 'ins', 'tab', '1k', '2k', '3k', '4k',
   '5k', '6k', '7k', '8k', '9k',
 ]);
+
+// These are vocabulary values in a technical enum, not prose. They are
+// allowed only when the English key actually contains "kind (...)".
+const TECHNICAL_ENUM_WORDS = new Set(['unit', 'item', 'spell', 'world', 'compare', 'kind', 'function']);
 
 function stripCommandsAndCode(value) {
   return String(value)
@@ -158,9 +166,12 @@ function englishLeftover(key, value) {
   if (hasHan(value)) {
     // The search grammar is deliberately documented in English. Its words
     // are keywords, not an untranslated sentence; ordinary prose still fails.
+    const isTechnicalEnum = /\bkind\s*\(/i.test(String(key));
+    const isAllowedTechnical = (w) => isTechnicalEnum && TECHNICAL_ENUM_WORDS.has(w.toLowerCase());
     const isOrdinary = (w) =>
       !ALLOWED_ENGLISH.has(w) &&
       !MIXED_ASCII_WORDS.has(w.toLowerCase()) &&
+      !isAllowedTechnical(w) &&
       !UI_ACTION_WORDS.has(w.toLowerCase());
     const isKeywordPage = /\b(?:q>|ilvl>|boe\s*&|gear\s*,)/i.test(String(key));
     // A sentence with Chinese is translated even when product names repeat:
@@ -174,7 +185,7 @@ function englishLeftover(key, value) {
     // brands repeated around Chinese, not a leaked English clause. A single
     // UI action (Open/Save) is still rejected below.
     // Repeated product names around Chinese are not a leaked English clause.
-    if (ascii.length && words.some((w) => hasHan(w)) && ascii.every((w) => ALLOWED_ENGLISH.has(w) || MIXED_ASCII_WORDS.has(w.toLowerCase()))) return false;
+    if (ascii.length && words.some((w) => hasHan(w)) && ascii.every((w) => ALLOWED_ENGLISH.has(w) || MIXED_ASCII_WORDS.has(w.toLowerCase()) || isAllowedTechnical(w))) return false;
     let run = 0;
     let longest = 0;
     for (const w of ascii) {
@@ -184,7 +195,7 @@ function englishLeftover(key, value) {
     if (longest >= 3 && !isKeywordPage) return true;
     // "(by DaylightUI)" is short but still has an untranslated preposition.
     // Ignore key/search tokens and technical in/out labels around it.
-    const englishProse = ascii.filter((w) => !MIXED_ASCII_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w));
+    const englishProse = ascii.filter((w) => !MIXED_ASCII_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w) && !isAllowedTechnical(w));
     if (englishProse.some((w) => /^(?:by|from|with|for|and|or|the|of)$/i.test(w))) return true;
     return words.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w));
   }
@@ -497,7 +508,31 @@ function nearbyContext(cat, key, refs) {
   return rows.slice(0, window).map((row) => row[2]);
 }
 
-async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
+async function readCheckpoint() {
+  try {
+    const data = JSON.parse(fs.readFileSync(checkpointPath, "utf8"));
+    const sha = process.env.ZHCN_CHECKPOINT_SHA || "";
+    if (sha && data.sha && data.sha !== sha) return { sha, translations: {} };
+    return { sha, translations: data.translations && typeof data.translations === "object" ? data.translations : {} };
+  } catch (e) {
+    return { sha: process.env.ZHCN_CHECKPOINT_SHA || "", translations: {} };
+  }
+}
+
+function writeCheckpoint(translations) {
+  const clean = {};
+  for (const [key, value] of Object.entries(translations || {})) {
+    if (validTranslation(key, value)) clean[key] = value;
+  }
+  fs.mkdirSync(path.dirname(checkpointPath), { recursive: true });
+  fs.writeFileSync(checkpointPath, JSON.stringify({ sha: process.env.ZHCN_CHECKPOINT_SHA || "", translations: clean }, null, 2) + "\n", "utf8");
+}
+
+function clearCheckpoint() {
+  try { fs.rmSync(checkpointPath, { force: true }); } catch (e) {}
+}
+
+function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
   const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
   if (!key) throw new Error('Repository secret API_KEY is not set');
   const base = (process.env.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1').replace(/\/$/, '');
@@ -515,6 +550,7 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
     'Do not translate slash commands, setting keys, font names, URLs or code identifiers.',
     'If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.',
     'Use the supplied reviewed pairs as translation memory for terminology.',
+    ...(opts.feedback ? ['A previous validated attempt failed: ' + opts.feedback, 'Correct that exact problem and return the full JSON object again.'] : []),
     'Use nearby_ui_text only to keep the same terminology and tone; never return it as a translation.',
     'Each requested row has original_english, source_location and nearby_ui_text. Translate original_english; source_location is only a file reference and must never be returned as a translation.',
     'Required glossary: ' + JSON.stringify(glossary),
@@ -601,7 +637,7 @@ async function requestBatch(batch, memory, opts = {}) {
   let last;
   for (let attempt = 1; attempt <= tries; attempt++) {
     try {
-      return await requestOnce(batch, memory, fetchImpl, { review: opts.review === true, model: opts.model });
+      return await requestOnce(batch, memory, fetchImpl, { review: opts.review === true, model: opts.model, feedback: opts.feedback });
     } catch (e) {
       last = e;
       if (e.outputError) break;
@@ -649,13 +685,17 @@ async function translate() {
   ])];
   if (!missing.length) return;
   const memory = translationMemory(entries);
+  const checkpoint = readCheckpoint();
   const result = {};
   for (const k of missing) {
+    const saved = checkpoint.translations[k];
     const hit = memory.approx.get(normal(k));
     // Never reuse an English value (including the key itself) as a translation.
     // Otherwise translate() calls no model at all and fails every scheduled run.
-    if (hit && validTranslation(k, hit)) result[k] = hit;
+    if (saved && validTranslation(k, saved)) result[k] = saved;
+    else if (hit && validTranslation(k, hit)) result[k] = hit;
   }
+  writeCheckpoint(result);
   const remaining = missing.filter((k) => !(k in result));
   console.log(`Translation memory reused: ${missing.length - remaining.length}`);
   console.log(`AI translation needed: ${remaining.length}`);
@@ -666,17 +706,30 @@ async function translate() {
     console.log(`AI batch ${i / size + 1}/${Math.ceil(remaining.length / size)} (${batch.length} strings)`);
     try {
       Object.assign(result, await requestBatch(batch, memory));
+      writeCheckpoint(result);
     } catch (e) {
       console.error(`AI batch ${i / size + 1} still failed: ${e.message || e}`);
       const recovered = e.translations || {};
       Object.assign(result, recovered);
-      for (const [key] of batch) {
-        if (!(key in recovered)) failed.push({ key, error: String(e.message || e) });
+      writeCheckpoint(result);
+      const retryRows = batch.filter(([key]) => !(key in recovered));
+      let repaired = {};
+      if (retryRows.length) {
+        try {
+          repaired = await requestBatch(retryRows, translationMemory(new Map([...entries, ...Object.entries(result)])), { feedback: String(e.message || e) });
+          Object.assign(result, repaired);
+          writeCheckpoint(result);
+        } catch (repairError) {
+          console.error(`AI repair pass failed: ${repairError.message || repairError}`);
+        }
+      }
+      for (const [key] of retryRows) {
+        if (!(key in repaired)) failed.push({ key, error: String(e.message || e) });
       }
     }
   }
   if (failed.length) {
-    console.error(`Translation incomplete: ${failed.length} AI failures.`);
+    console.error(`Translation incomplete: ${failed.length} AI failures. Progress checkpoint kept for the next run.`);
     process.exit(1);
   }
 
@@ -717,9 +770,10 @@ async function translate() {
   applyData(result, "AI translation", { replace: true });
   const after = report();
   if (after.missing.length || after.english.length || after.bad.length || after.stale.length) {
-    console.error(`Translation incomplete: ${after.missing.length} missing, ${after.english.length} English leftovers, ${after.bad.length} invalid, ${after.stale.length} removed.`);
+    console.error(`Translation incomplete: ${after.missing.length} missing, ${after.english.length} English leftovers, ${after.bad.length} invalid, ${after.stale.length} removed. Progress checkpoint kept for the next run.`);
     process.exit(1);
   }
+  clearCheckpoint();
 }
 
 // Full consensus pass: ask several models for the same source, then ask a
@@ -913,7 +967,7 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint };
 
 
 
