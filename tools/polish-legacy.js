@@ -230,7 +230,7 @@ function buildMessages(batch, glossary, entries) {
   return [{ role: "system", content: system }, { role: "user", content: user }];
 }
 
-async function requestBatch(batch, glossary, entries, model, fetchImpl) {
+async function requestBatchOnce(batch, glossary, entries, model, fetchImpl) {
   const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
   if (!key) throw new Error("API_KEY / OPENAI_API_KEY is not set in this process");
   const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
@@ -242,35 +242,78 @@ async function requestBatch(batch, glossary, entries, model, fetchImpl) {
   };
   if (process.env.AI_JSON_MODE === "true") payload.response_format = { type: "json_object" };
 
+  const res = await fetchImpl(base + "/chat/completions", {
+    signal: AbortSignal.timeout(Number(process.env.POLISH_TIMEOUT_MS || 180000)),
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const error = new Error(`AI request failed (${res.status}): ${text.slice(0, 800)}`);
+    error.status = res.status;
+    throw error;
+  }
+  return zhcn.parseModelJson(text, batch.length === 1 ? batch[0].key : null);
+}
+
+function shouldRetryPolish(error) {
+  if (!error) return false;
+  const msg = String(error.message || error);
+  if (!zhcn.retryable(error) && !/invalid JSON|unreadable response|AI omitted|outputError|AI request failed|fetch failed|network|timeout|timed out|abort/i.test(msg) && error.name !== "TimeoutError" && error.name !== "AbortError") return false;
+  return true;
+}
+
+// Retry each request, then bisect and finally fall back to one-string requests.
+// Callers must decide what to do with individual failures; this helper only
+// groups successful responses so a malformed reply cannot abort the full run.
+async function requestBatch(batch, glossary, entries, model, fetchImpl) {
   const tries = integerEnv("POLISH_RETRIES", 3, 1);
   const waitMs = integerEnv("POLISH_RETRY_BASE_MS", 1500, 0);
   let last;
   for (let attempt = 1; attempt <= tries; attempt++) {
     try {
-      const res = await fetchImpl(base + "/chat/completions", {
-        signal: AbortSignal.timeout(Number(process.env.POLISH_TIMEOUT_MS || 180000)),
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
-        body: JSON.stringify(payload),
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        const error = new Error(`AI request failed (${res.status}): ${text.slice(0, 800)}`);
-        error.status = res.status;
-        throw error;
-      }
-      return zhcn.parseModelJson(text, batch.length === 1 ? batch[0].key : null);
+      return await requestBatchOnce(batch, glossary, entries, model, fetchImpl);
     } catch (error) {
       last = error;
-      const retryable = zhcn.retryable(error) || error.name === "TimeoutError" || error.name === "AbortError";
-      if (!retryable || attempt === tries) break;
-      console.error(`  batch retry ${attempt}/${tries}: ${error.message || error}`);
+      if (!shouldRetryPolish(error) || attempt === tries) break;
+      console.error(`  batch retry ${attempt}/${tries - 1}: ${error.message || error}`);
       await sleep(Math.min(30000, waitMs * (2 ** (attempt - 1))));
     }
   }
-  throw last;
-}
 
+  if (batch.length === 1) throw last;
+  const mid = Math.floor(batch.length / 2);
+  const left = batch.slice(0, mid);
+  const right = batch.slice(mid);
+  console.error(`  splitting failed batch of ${batch.length} into ${left.length} + ${right.length}`);
+  const [leftResult, rightResult] = await Promise.all([
+    requestBatch(left, glossary, entries, model, fetchImpl).catch((error) => ({ __polishError: error, rows: left })),
+    requestBatch(right, glossary, entries, model, fetchImpl).catch((error) => ({ __polishError: error, rows: right })),
+  ]);
+  const merged = {};
+  let skipped = 0;
+  for (const result of [leftResult, rightResult]) {
+    if (result && result.__polishError) {
+      const err = result.__polishError;
+      if (result.rows.length === 1) {
+        console.error(`  skipped ${JSON.stringify(result.rows[0].key)} after single-item retry failed: ${err.message || err}`);
+        skipped++;
+      } else {
+        // A whole sub-batch should never remain after recursion; keep the
+        // originals rather than throwing if that ever happens.
+        for (const row of result.rows) {
+          console.error(`  skipped ${JSON.stringify(row.key)} after sub-batch failed: ${err.message || err}`);
+          skipped++;
+        }
+      }
+      continue;
+    }
+    Object.assign(merged, result || {});
+  }
+  if (skipped) merged.__polishSkipped = skipped;
+  return merged;
+}
 function normalizeSuggestion(raw) {
   if (typeof raw === "string") return { action: raw.trim() ? "change" : "keep", suggested: raw, reason: "" };
   if (!raw || typeof raw !== "object") return { action: "keep", suggested: "", reason: "" };
@@ -300,7 +343,7 @@ async function doRun() {
   const allPending = scan.candidates.filter((row) => !cp.done[row.key] && zhcn.validTranslation(row.key, row.current) !== undefined);
   const limit = integerEnv("POLISH_LIMIT", 0, 0);
   const pending = limit > 0 ? allPending.slice(0, limit) : allPending;
-  const batchSize = integerEnv("POLISH_BATCH_SIZE", 10, 1);
+  const batchSize = integerEnv("POLISH_BATCH_SIZE", 8, 1);
   const fetchImpl = globalThis.fetch;
   console.log(`run: model=${model}, temperature=0.1, candidates=${scan.candidates.length}, pending=${pending.length}, remaining=${allPending.length}, limit=${limit || "none"}, batch=${batchSize}`);
 
@@ -309,6 +352,17 @@ async function doRun() {
     console.log(`  polishing ${offset + 1}-${offset + batch.length} of ${pending.length}`);
     const parsed = await requestBatch(batch, glossary, entries, model, fetchImpl);
     for (const row of batch) {
+      if (!Object.prototype.hasOwnProperty.call(parsed, row.key)) {
+        cp.done[row.key] = true;
+        cp.kept[row.key] = {
+          action: "keep",
+          key: row.key,
+          current: row.current,
+          reason: "skipped: AI batch failed for this entry; original translation kept",
+          categories: row.categories,
+        };
+        continue;
+      }
       const suggestion = normalizeSuggestion(parsed[row.key]);
       let decision;
       if (suggestion.action !== "change" || !suggestion.suggested || suggestion.suggested === row.current) {
@@ -358,6 +412,7 @@ async function doRun() {
   };
   writeJson(diffPath, diff);
 
+  const skipped = kept.filter((row) => String(row.reason || "").startsWith("skipped:"));
   const lines = [
     "# zhCN polish-legacy review",
     "",
@@ -365,6 +420,7 @@ async function doRun() {
     `- Run limit: ${diff.limit || "none"}`,
     `- Reviewed entries: ${diff.reviewed}`,
     `- Suggested changes: ${diff.changeCount}`,
+    `- Skipped entries: ${skipped.length}`,
     `- Model: ${model}`,
     `- Generated: ${diff.generatedAt}`,
     "",
@@ -377,6 +433,10 @@ async function doRun() {
   }
   if (!changes.length) lines.push("| _none_ | | | |");
   lines.push("", "Review file: `tools/reports/zhcn-polish-review.md`.", "Apply only after explicit confirmation.", "");
+  if (skipped.length) {
+    lines.push("", "## Skipped entries (original translation kept)", "", "| Key | Current | Reason |", "| --- | --- | --- |");
+    for (const row of skipped) lines.push(`| \`${md(row.key)}\` | ${md(row.current)} | ${md(row.reason)} |`);
+  }
   ensureReportDir();
   fs.writeFileSync(reviewPath, lines.join("\n"), "utf8");
 

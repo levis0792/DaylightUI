@@ -34,8 +34,8 @@ jobs:
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
       POLISH_MODEL: ${{ inputs.model || 'deepseek-v4.1-flash' }}
       POLISH_LIMIT: ${{ inputs.limit || '0' }}
-      POLISH_BATCH_SIZE: ${{ vars.POLISH_BATCH_SIZE || '20' }}
-      POLISH_RETRIES: ${{ vars.POLISH_RETRIES || '4' }}
+      POLISH_BATCH_SIZE: ${{ vars.POLISH_BATCH_SIZE || '8' }}
+      POLISH_RETRIES: ${{ vars.POLISH_RETRIES || '3' }}
       POLISH_RETRY_BASE_MS: ${{ vars.POLISH_RETRY_BASE_MS || '1500' }}
       POLISH_TIMEOUT_MS: '180000'
       ZHCN_ROOT: ${{ github.workspace }}
@@ -120,28 +120,32 @@ jobs:
           fi
 
       - name: Add review to job summary
-        if: always() && steps.review.outcome == 'success'
+        if: always()
         shell: bash
         env:
           ZHCN_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          {
-            echo "## zhCN polish-legacy review"
-            echo
-            echo "Model: \`${POLISH_MODEL}\`"
-            echo
-            echo "Limit: \`${POLISH_LIMIT}\`"
-            echo
-            cat "${ZHCN_ROOT}/tools/reports/zhcn-polish-review.md"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "${ZHCN_ROOT}/tools/reports/zhcn-polish-review.md" ]; then
+            {
+              echo "## zhCN polish-legacy review"
+              echo
+              echo "Model: \`${POLISH_MODEL}\`"
+              echo
+              echo "Limit: \`${POLISH_LIMIT}\`"
+              echo
+              cat "${ZHCN_ROOT}/tools/reports/zhcn-polish-review.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Review report was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload review artifacts
-        if: always() && steps.review.outcome == 'success'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-polish-review-${{ github.run_id }}
           path: |
             tools/reports/zhcn-polish-review.md
             tools/reports/zhcn-polish-diff.json
-          if-no-files-found: error
+          if-no-files-found: warn
