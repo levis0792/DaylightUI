@@ -109,7 +109,7 @@ const MIXED_ASCII_WORDS = new Set([
   'q', 'ilvl', 'x', 'g', 't', 'p', 's', 'y', 'w', 'c', 'a', 'z', 'n',
   'boe', 'bou', 'set', 'h', 'm', 'k', 'id', 'frame', 'npcs', 'npc',
   'up', 'down', 'left', 'right', 'zoom', 'in', 'out', 'shift',
-  'ctrl', 'alt', 'esc', 'del', 'ins', 'tab', '1k', '2k', '3k', '4k',
+  'ctrl', 'alt', 'esc', 'del', 'ins', 'tab', 'unit', 'item', 'spell', 'world', 'compare', 'kind', 'function', '1k', '2k', '3k', '4k',
   '5k', '6k', '7k', '8k', '9k',
 ]);
 
@@ -621,8 +621,20 @@ async function requestBatch(batch, memory, opts = {}) {
   if (last && last.outputError && batch.length > 1) {
     console.error('Retrying the failed batch one string at a time.');
     const out = {};
-    for (const row of batch) Object.assign(out, await requestBatch([row], memory, { ...opts, retries: tries, wait }));
-    return out;
+    const failed = [];
+    for (const row of batch) {
+      try {
+        Object.assign(out, await requestBatch([row], memory, { ...opts, retries: tries, wait }));
+      } catch (e) {
+        failed.push({ key: row[0], error: e.message || String(e) });
+      }
+    }
+    if (!failed.length) return out;
+    const error = new Error('AI failed for ' + failed.length + ' of ' + batch.length + ' strings: ' + failed.map((x) => JSON.stringify(x.key)).join(', '));
+    error.outputError = true;
+    error.translations = out;
+    error.failedKeys = failed.map((x) => x.key);
+    throw error;
   }
   if (last && last.outputError) throw last;
   if (last && !retryable(last)) throw last;
@@ -656,7 +668,11 @@ async function translate() {
       Object.assign(result, await requestBatch(batch, memory));
     } catch (e) {
       console.error(`AI batch ${i / size + 1} still failed: ${e.message || e}`);
-      for (const [key] of batch) failed.push({ key, error: String(e.message || e) });
+      const recovered = e.translations || {};
+      Object.assign(result, recovered);
+      for (const [key] of batch) {
+        if (!(key in recovered)) failed.push({ key, error: String(e.message || e) });
+      }
     }
   }
   if (failed.length) {
