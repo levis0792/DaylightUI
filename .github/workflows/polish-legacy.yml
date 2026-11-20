@@ -38,6 +38,8 @@ jobs:
       POLISH_RETRIES: ${{ vars.POLISH_RETRIES || '4' }}
       POLISH_RETRY_BASE_MS: ${{ vars.POLISH_RETRY_BASE_MS || '1500' }}
       POLISH_TIMEOUT_MS: '180000'
+      ZHCN_ROOT: ${{ github.workspace }}
+      ZHCN_TOOL_ROOT: ${{ runner.temp }}/polish-tools
     steps:
       - name: Check out maintenance tools
         uses: actions/checkout@v4
@@ -84,33 +86,33 @@ jobs:
           luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
           export ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt"
           export ZHCN_ROOT="$GITHUB_WORKSPACE"
+          export ZHCN_TOOL_ROOT="${RUNNER_TEMP}/polish-tools"
           node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" sync "${RUNNER_TEMP}/zhcn-fork.lua"
           node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" prune
           node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" dedupe
           if [ -f "${RUNNER_TEMP}/polish-tools/tools/zhcn-overrides.json" ]; then
             node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" override "${RUNNER_TEMP}/polish-tools/tools/zhcn-overrides.json"
           fi
-          cp "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" tools/zhcn.js
-          cp "${RUNNER_TEMP}/polish-tools/tools/zhcn-glossary.json" tools/zhcn-glossary.json
-          cp "${RUNNER_TEMP}/polish-tools/tools/zhcn-overrides.json" tools/zhcn-overrides.json
-          cp -a "${RUNNER_TEMP}/polish-tools/tools/lib" tools/lib
 
       - name: Scan high-risk legacy translations
         shell: bash
         run: |
           set -euo pipefail
-          node tools/polish-legacy.js scan
+          node "${ZHCN_TOOL_ROOT}/tools/polish-legacy.js" scan
 
       - name: Draft conservative review
         id: review
         shell: bash
         run: |
           set -euo pipefail
-          node tools/polish-legacy.js run
-          test -f tools/reports/zhcn-polish-review.md
-          test -f tools/reports/zhcn-polish-diff.json
-          if ! git diff --quiet -- Locales/zhCN.lua; then
+          locale_before=$(sha256sum Locales/zhCN.lua | awk '{print $1}')
+          node "${ZHCN_TOOL_ROOT}/tools/polish-legacy.js" run
+          test -f "${ZHCN_ROOT}/tools/reports/zhcn-polish-review.md"
+          test -f "${ZHCN_ROOT}/tools/reports/zhcn-polish-diff.json"
+          locale_after=$(sha256sum Locales/zhCN.lua | awk '{print $1}')
+          if [ "$locale_before" != "$locale_after" ]; then
             echo "::error::polish-legacy run changed Locales/zhCN.lua; aborting"
+            echo "before=$locale_before after=$locale_after"
             exit 1
           fi
 
@@ -126,7 +128,7 @@ jobs:
             echo
             echo "Limit: \`${POLISH_LIMIT}\`"
             echo
-            cat tools/reports/zhcn-polish-review.md
+            cat "${ZHCN_ROOT}/tools/reports/zhcn-polish-review.md"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload review artifacts
