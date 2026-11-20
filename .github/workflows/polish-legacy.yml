@@ -39,7 +39,6 @@ jobs:
       POLISH_RETRY_BASE_MS: ${{ vars.POLISH_RETRY_BASE_MS || '1500' }}
       POLISH_TIMEOUT_MS: '180000'
       ZHCN_ROOT: ${{ github.workspace }}
-      ZHCN_TOOL_ROOT: ${{ runner.temp }}/polish-tools
     steps:
       - name: Check out maintenance tools
         uses: actions/checkout@v4
@@ -98,6 +97,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ZHCN_TOOL_ROOT="${RUNNER_TEMP}/polish-tools"
+          export ZHCN_TOOL_ROOT
           node "${ZHCN_TOOL_ROOT}/tools/polish-legacy.js" scan
 
       - name: Draft conservative review
@@ -105,6 +106,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ZHCN_TOOL_ROOT="${RUNNER_TEMP}/polish-tools"
+          export ZHCN_TOOL_ROOT
           locale_before=$(sha256sum Locales/zhCN.lua | awk '{print $1}')
           node "${ZHCN_TOOL_ROOT}/tools/polish-legacy.js" run
           test -f "${ZHCN_ROOT}/tools/reports/zhcn-polish-review.md"
@@ -119,6 +122,8 @@ jobs:
       - name: Add review to job summary
         if: always() && steps.review.outcome == 'success'
         shell: bash
+        env:
+          ZHCN_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
           {
