@@ -123,6 +123,20 @@ jobs:
         with:
           node-version: 22
 
+      - name: Run zhCN tool regression tests
+        if: steps.changed.outputs.needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in OPENAI_MODEL ZHCN_REVIEW_MODEL ZHCN_REVIEW_FALLBACK_MODEL ZHCN_REVIEW_LAST_MODEL ZHCN_CONSENSUS_MODELS ZHCN_JUDGE_MODEL; do
+            test "${!name}" = 'deepseek-v4.1-flash' || {
+              echo "::error::${name} must stay deepseek-v4.1-flash"
+              exit 1
+            }
+          done
+          node tests/test_zhcn_tool.js
+          node tests/test_pr_summary.js
+
       - name: Install LuaJIT
         if: steps.changed.outputs.needed == 'true'
         run: sudo apt-get update -q && sudo apt-get install -y -q luajit
@@ -141,6 +155,18 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "short=$short" >> "$GITHUB_OUTPUT"
+
+      - name: Restore translation checkpoint from state branch
+        if: steps.changed.outputs.needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/zhcn-checkpoint"
+          if git show "refs/remotes/origin/${ZHCN_STATE_BRANCH}:.zhcn-checkpoint.json" > "${RUNNER_TEMP}/zhcn-checkpoint/checkpoint.json" 2>/dev/null; then
+            echo "Restored translation checkpoint from ${ZHCN_STATE_BRANCH}."
+          else
+            echo "No saved translation checkpoint found."
+          fi
 
       - name: Fetch the game's UI code for the author's runtime walker
         if: steps.changed.outputs.needed == 'true'
@@ -245,6 +271,8 @@ jobs:
         id: translate
         if: steps.scan.outputs.needed == 'true'
         env:
+          ZHCN_CHECKPOINT: ${{ runner.temp }}/zhcn-checkpoint/checkpoint.json
+          ZHCN_CHECKPOINT_SHA: ${{ steps.upstream.outputs.sha }}
           ZHCN_ROOT: ${{ github.workspace }}
         shell: bash
         run: |
@@ -295,6 +323,15 @@ jobs:
         with:
           name: zhcn-ai-log-${{ github.run_id }}
           path: /tmp/zhcn-ai.log
+          if-no-files-found: ignore
+
+      - name: Upload translation checkpoint
+        if: always() && steps.changed.outputs.needed == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhcn-checkpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/zhcn-checkpoint/checkpoint.json
           if-no-files-found: ignore
 
       - name: Validate the author-facing file strictly
@@ -466,8 +503,37 @@ jobs:
           test -n "$number" || { echo "::error::The PR number was not returned."; exit 1; }
           echo "url=https://github.com/${UPSTREAM_REPO}/pull/${number}" >> "$GITHUB_OUTPUT"
 
+      - name: Save checkpoint to state branch after translation failure
+        if: always() && steps.changed.outputs.needed == 'true' && steps.translate.outcome == 'failure' && steps.upstream.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          file="${RUNNER_TEMP}/zhcn-checkpoint/checkpoint.json"
+          if [ ! -s "$file" ]; then
+            echo "No checkpoint to save."
+            exit 0
+          fi
+          state=$(mktemp -d)
+          cd "$state"
+          git init -q
+          git config user.name "DarkUI zhCN bot"
+          git config user.email "zhcn-bot@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
+          git fetch -q origin "${ZHCN_STATE_BRANCH}"
+          git checkout -q -B state FETCH_HEAD
+          cp "$file" ./.zhcn-checkpoint.json
+          git add .zhcn-checkpoint.json
+          if git diff --cached --quiet; then
+            echo "Checkpoint unchanged."
+            exit 0
+          fi
+          git commit -q -m "state: translation checkpoint ${{ steps.upstream.outputs.short }}"
+          git push --force origin "HEAD:${ZHCN_STATE_BRANCH}"
+
       - name: Record the processed upstream commit
-        if: steps.changed.outputs.needed == 'true' && steps.changes.outcome == 'success' && steps.changes.outputs.changed == 'true' && steps.pull.outcome == 'success'
+        if: always() && steps.changed.outputs.needed == 'true' && steps.changes.outcome == 'success' && steps.changes.outputs.changed == 'true' && steps.pull.outcome == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -480,7 +546,22 @@ jobs:
           git init -q
           git config user.name "DarkUI zhCN bot"
           git config user.email "zhcn-bot@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
+          git fetch -q origin "${ZHCN_STATE_BRANCH}"
+          git checkout -q -B state FETCH_HEAD
           printf '%s\n' "${{ steps.upstream.outputs.sha }}" > .upstream-sha
-          git add .upstream-sha
+          checkpoint="${RUNNER_TEMP}/zhcn-checkpoint/checkpoint.json"
+          if [ -s "$checkpoint" ]; then
+            cp "$checkpoint" ./.zhcn-checkpoint.json
+            echo "Keeping the active translation checkpoint in the state branch."
+          else
+            git rm -q --cached .zhcn-checkpoint.json 2>/dev/null || true
+            rm -f .zhcn-checkpoint.json
+          fi
+          git add -A
+          if git diff --cached --quiet; then
+            echo "State unchanged."
+            exit 0
+          fi
           git commit -q -m "state: upstream ${{ steps.upstream.outputs.short }}"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" "HEAD:${ZHCN_STATE_BRANCH}"
+          git push --force origin "HEAD:${ZHCN_STATE_BRANCH}"
