@@ -89,6 +89,44 @@ async function main() {
   delete process.env.ZHCN_KEYS_FILE;
   fs.rmSync(baselineRoot, { recursive: true, force: true });
   delete require.cache[require.resolve(toolPath)];
+  const checkpointRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-checkpoint-"));
+  fs.mkdirSync(path.join(checkpointRoot, "Locales"), { recursive: true });
+  fs.writeFileSync(path.join(checkpointRoot, "Locales", "zhCN.lua"), "", "utf8");
+  const checkpointFile = path.join(checkpointRoot, "checkpoint.json");
+  const oldCheckpoint = process.env.ZHCN_CHECKPOINT;
+  const oldCheckpointSha = process.env.ZHCN_CHECKPOINT_SHA;
+  process.env.ZHCN_ROOT = checkpointRoot;
+  process.env.ZHCN_CHECKPOINT = checkpointFile;
+  process.env.ZHCN_CHECKPOINT_SHA = "sha-123";
+  delete require.cache[require.resolve(toolPath)];
+  const checkpointTool = require(toolPath);
+  checkpointTool.writeCheckpoint({
+    Ready: "就绪",
+    Search: "Search",
+    "Press %s": "按 %d",
+  });
+  assert.deepEqual(
+    checkpointTool.readCheckpoint().translations,
+    { Ready: "就绪" },
+    "checkpoint writes must keep only valid translations",
+  );
+  fs.writeFileSync(checkpointFile, JSON.stringify({
+    sha: "sha-other",
+    translations: { Ready: "就绪" },
+  }), "utf8");
+  assert.deepEqual(
+    checkpointTool.readCheckpoint().translations,
+    {},
+    "a checkpoint from another upstream SHA must not be reused",
+  );
+  checkpointTool.clearCheckpoint();
+  assert.equal(fs.existsSync(checkpointFile), false, "clearCheckpoint must remove the file");
+  if (oldCheckpoint === undefined) delete process.env.ZHCN_CHECKPOINT; else process.env.ZHCN_CHECKPOINT = oldCheckpoint;
+  if (oldCheckpointSha === undefined) delete process.env.ZHCN_CHECKPOINT_SHA; else process.env.ZHCN_CHECKPOINT_SHA = oldCheckpointSha;
+  delete process.env.ZHCN_ROOT;
+  fs.rmSync(checkpointRoot, { recursive: true, force: true });
+  delete require.cache[require.resolve(toolPath)];
+
   const { readTranslations } = luaStrings;
   const generatedTable = [
     "P.translations = {",
@@ -143,6 +181,36 @@ async function main() {
   const glossary = readGlossary();
   assert.equal(glossary["Focus Target"], "焦点目标");
   assert.equal(glossary["tooltip"], "鼠标提示");
+  const requiredGlossary = {
+    "General": "常规",
+    "General channel": "综合频道",
+    "Whisper": "密语",
+    "Whispers": "密语",
+    "Bar icons": "伤害统计条图标",
+    "Point 1": "第1点",
+    "Point 2": "第2点",
+    "Point 3": "第3点",
+    "Point 4": "第4点",
+    "Point 5": "第5点",
+    "Combat text": "浮动战斗信息",
+    "Scrolling combat text": "浮动战斗信息",
+    "Loot": "拾取",
+    "Cast bar": "施法条",
+    "Cast bars": "施法条",
+    "Cast Bars": "施法条",
+    "Nameplates": "姓名板",
+    "Unit Frames": "单位框体",
+    "Party": "小队",
+    "Raid": "团队",
+    "Guild": "公会",
+    "Battleground": "战场",
+    "Battlegrounds": "战场",
+    "Arena": "竞技场",
+    "Arenas": "竞技场",
+  };
+  for (const [key, value] of Object.entries(requiredGlossary)) {
+    assert.equal(glossary[key], value, "glossary must lock " + JSON.stringify(key));
+  }
 
   assert.equal(retryable({ status: 429 }), true);
   assert.equal(retryable({ status: 503 }), true);
@@ -379,6 +447,17 @@ async function main() {
       fetchImpl: async () => { calls += 1; return fakeResponse(200, completion("not json")); },
     }), /left the string in English|invalid JSON/);
     assert.equal(calls, 1, "invalid model JSON is not retried with backoff");
+
+    calls = 0;
+    await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
+      retries: 3,
+      wait: async () => {},
+      fetchImpl: async () => {
+        calls += 1;
+        return fakeResponse(200, completion(JSON.stringify({ CompletelyDifferent: "就绪" })));
+      },
+    }), /AI omitted/);
+    assert.equal(calls, 1, "a single-key response under the wrong key must not be accepted");
 
     calls = 0;
     await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
