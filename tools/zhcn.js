@@ -508,7 +508,7 @@ function nearbyContext(cat, key, refs) {
   return rows.slice(0, window).map((row) => row[2]);
 }
 
-async function readCheckpoint() {
+function readCheckpoint() {
   try {
     const data = JSON.parse(fs.readFileSync(checkpointPath, "utf8"));
     const sha = process.env.ZHCN_CHECKPOINT_SHA || "";
