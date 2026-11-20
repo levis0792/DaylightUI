@@ -32,5 +32,9 @@
   "Whispers": "密语",
   "Whispers show in": "密语显示于",
   "Bought by": "买家",
-  "Sold by": "卖家"
+  "Sold by": "卖家",
+  "Grow direction": "延伸方向",
+  " Time ran out, so you passed.": " 时间耗尽，你已放弃。",
+  " You passed.": " 你已放弃。",
+  "Everyone passed.": "所有人都放弃了。"
 }

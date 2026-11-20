@@ -71,7 +71,8 @@ jobs:
       ZHCN_REVIEW_LAST_MODEL: deepseek-v4.1-flash
       ZHCN_BATCH_SIZE: ${{ vars.ZHCN_BATCH_SIZE || '12' }}
       ZHCN_CONTEXT_LINES: ${{ vars.ZHCN_CONTEXT_LINES || '6' }}
-      ZHCN_REVIEW: 'false'
+      ZHCN_REVIEW: 'true'
+      ZHCN_REVIEW_BATCH_SIZE: '6'
       ZHCN_CONSENSUS_MODELS: deepseek-v4.1-flash
       ZHCN_JUDGE_MODEL: deepseek-v4.1-flash
       ZHCN_CONSENSUS_BATCH_SIZE: ${{ vars.ZHCN_CONSENSUS_BATCH_SIZE || '10' }}
@@ -299,6 +300,10 @@ jobs:
               echo "Translation succeeded on attempt ${attempt}."
               break
             fi
+            if [ "$rc" -eq 2 ]; then
+              echo "::warning::AI translation attempt ${attempt}/${attempts} was deferred by a temporary API issue: ${last_detail}"
+              break
+            fi
             echo "::warning::AI translation attempt ${attempt}/${attempts} failed: ${last_detail}"
             if [ "$attempt" -lt "$attempts" ]; then
               delay=$((10 * attempt * attempt))
@@ -306,6 +311,11 @@ jobs:
               sleep "$delay"
             fi
           done
+          if [ "$rc" -eq 2 ]; then
+            echo "deferred=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Translation deferred; locale unchanged; checkpoint saved for the next run."
+            exit 0
+          fi
           if [ "$rc" -ne 0 ]; then
             echo "::error::AI translation failed after ${attempts} workflow attempts: ${last_detail}"
             echo "::notice::Locale was left unchanged; the next scheduled or manual run will retry the same upstream commit."
@@ -335,13 +345,13 @@ jobs:
           if-no-files-found: ignore
 
       - name: Validate the author-facing file strictly
-        if: always() && steps.changed.outputs.needed == 'true' && steps.translate.outcome == 'success'
+        if: always() && steps.changed.outputs.needed == 'true' && steps.translate.outcome == 'success' && steps.translate.outputs.deferred != 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
         run: ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" check
 
       - name: Run the author's own locale test
-        if: always() && steps.changed.outputs.needed == 'true'
+        if: always() && steps.changed.outputs.needed == 'true' && steps.translate.outputs.deferred != 'true'
         shell: bash
         run: |
           # This is the author's gate for a locale-only PR: it catches keys the
@@ -349,7 +359,7 @@ jobs:
           luajit tests/run.lua --par --only test_locale
 
       - name: Test deduplication, routing and translator retry handling
-        if: steps.changed.outputs.needed == 'true'
+        if: steps.changed.outputs.needed == 'true' && steps.translate.outputs.deferred != 'true'
         env:
           ZHCN_ROOT: ${{ github.workspace }}
           ZHCN_TOOL_ROOT: ${{ runner.temp }}/zhcn-tools
@@ -379,6 +389,7 @@ jobs:
           OUTCOME_TRANSLATE: ${{ steps.translate.outcome }}
           OUTCOME_CHANGES: ${{ steps.changes.outcome }}
           OUTCOME_PULL: ${{ steps.pull.outcome }}
+          DEFERRED: ${{ steps.translate.outputs.deferred || 'false' }}
         run: |
           {
             echo "## zhCN automation status"
@@ -389,12 +400,13 @@ jobs:
             echo "- Translation: ${OUTCOME_TRANSLATE:-not-run}"
             echo "- Commit: ${OUTCOME_CHANGES:-not-run}"
             echo "- Upstream PR: ${OUTCOME_PULL:-not-run}"
+            echo "- Deferred: ${DEFERRED:-false}"
             echo
             echo "The processed SHA is recorded only after a successful PR update."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload translation review report
-        if: steps.changed.outputs.needed == 'true'
+        if: steps.changed.outputs.needed == 'true' && steps.translate.outputs.deferred != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: zhcn-ai-review-${{ steps.upstream.outputs.short }}
@@ -402,7 +414,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Commit the translation
-        if: steps.changed.outputs.needed == 'true'
+        if: steps.changed.outputs.needed == 'true' && steps.translate.outputs.deferred != 'true'
         id: changes
         env:
           UPSTREAM_SHORT: ${{ steps.upstream.outputs.short }}
@@ -456,12 +468,13 @@ jobs:
           grep -q "^Format/empty errors: 0$" /tmp/zhcn-final.txt
           grep -q "^Removed keys: 0$" /tmp/zhcn-final.txt
 
-          validation=$(awk '/^(Missing keys|Untranslated|Duplicate keys|Format\/empty errors):/ {gsub(": ", " "); printf "%s; ", $0}' /tmp/zhcn-final.txt | sed 's/; $//')
+          validation=$(awk '/^(Missing keys|Untranslated|Duplicate keys|Format\/empty errors|Terminology violations):/ {gsub(": ", " "); printf "%s; ", $0}' /tmp/zhcn-final.txt | sed 's/; $//')
 
           {
             echo "## Simplified Chinese translation update"
             echo
             echo "Update the Simplified Chinese locale for upstream commit \`${UPSTREAM_SHORT}\`."
+            echo "Translations use the locked WoW zhCN terminology glossary, with a second review pass for high-risk strings."
             echo
             printf '%s\n' "${summary:-No translation entries changed.}"
             echo
@@ -503,8 +516,8 @@ jobs:
           test -n "$number" || { echo "::error::The PR number was not returned."; exit 1; }
           echo "url=https://github.com/${UPSTREAM_REPO}/pull/${number}" >> "$GITHUB_OUTPUT"
 
-      - name: Save checkpoint to state branch after translation failure
-        if: always() && steps.changed.outputs.needed == 'true' && steps.translate.outcome == 'failure' && steps.upstream.outcome == 'success'
+      - name: Save checkpoint to state branch after translation failure or deferral
+        if: always() && steps.changed.outputs.needed == 'true' && (steps.translate.outcome == 'failure' || steps.translate.outputs.deferred == 'true') && steps.upstream.outcome == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

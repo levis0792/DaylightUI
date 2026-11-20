@@ -243,6 +243,7 @@ function report({ missingOnly = false } = {}) {
   const bad = [...entries].filter(([k, v]) => !v.trim() || v.includes("\uFFFD") || !formatOk(k, v) || !codesOk(k, v));
   const untranslatedValues = [...cat.keys()].filter((k) => entries.has(k) && englishLeftover(k, entries.get(k)));
   const english = untranslatedValues;
+  const terminology = terminologyViolations(entries);
   console.log(`Current UI strings: ${cat.size}`);
   console.log(`zhCN entries: ${entries.size}`);
   console.log(`Missing keys: ${missing.length}`);
@@ -251,10 +252,16 @@ function report({ missingOnly = false } = {}) {
   console.log(`English leftovers: ${english.length}`);
   console.log(`Duplicate keys: ${duplicates.length}`);
   console.log(`Format/empty errors: ${bad.length}`);
+  console.log(`Terminology violations: ${terminology.length}`);
   if (duplicates.length) for (const k of duplicates) console.log(`  duplicate ${JSON.stringify(k)}`);
   if (bad.length) for (const [k, v] of bad.slice(0, 80)) console.log(`  invalid ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
   if (english.length && !missingOnly) for (const k of english) console.log(`  english ${JSON.stringify(k)} -> ${JSON.stringify(entries.get(k))}`);
   if (missing.length && !missingOnly) for (const k of missing) console.log(`  missing ${JSON.stringify(k)}`);
+  if (terminology.length && !missingOnly) {
+    for (const item of terminology.slice(0, 80)) {
+      console.log(`  terminology ${JSON.stringify(item.key)} -> ${JSON.stringify(item.value)} expected ${JSON.stringify(item.expected)}`);
+    }
+  }
   if (stale.length && !missingOnly && stale.length <= 80) for (const k of stale) console.log(`  removed ${JSON.stringify(k)}`);
   if (missing.length) {
     const out = path.join(root, "tools", "reports", "zhcn-missing.tsv");
@@ -262,7 +269,55 @@ function report({ missingOnly = false } = {}) {
     fs.writeFileSync(out, missing.map((k) => `${JSON.stringify(k)}\t${cat.get(k).refs.join(",")}`).join("\n") + "\n", "utf8");
     console.log(`Report: ${path.relative(root, out)}`);
   }
-  return { cat, entries, duplicates, missing, stale, bad, english };
+  return { cat, entries, duplicates, missing, stale, bad, english, terminology };
+}
+
+// Locked glossary terms are checked without being made fatal yet. This gives
+// the PR validator and humans a visible warning list while the terminology set
+// is still being refined against merged/reviewed locale files.
+function terminologyViolations(entries) {
+  let glossary;
+  try {
+    glossary = readGlossary();
+  } catch (e) {
+    return [{ key: '<glossary>', value: e.message, expected: 'valid JSON glossary' }];
+  }
+  const violations = [];
+  const straighten = (s) => String(s)
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  // A glossary term is a vocabulary lock for its exact key. For longer keys,
+  // only standalone terms in prose are checked; hidden substrings such as
+  // Debuff or Durability and verbs such as "needs" must not create false alarms.
+  const termBoundary = term => {
+    const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|[\\s/>:_-])' + escaped + '(?=$|[\\s/>:_-])', 'i');
+  };
+  const hasRemainder = (actual, term) => {
+    const simple = /^[A-Za-z][A-Za-z -]*$/.test(term);
+    if (!simple) return false;
+    const words = term.toLowerCase().split(/\s+/).filter(Boolean);
+    return words.every((word) => new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i').test(actual));
+  };
+  for (const [term, expectedRaw] of Object.entries(glossary)) {
+    const expected = straighten(expectedRaw);
+    if (!hasHan(expected)) continue;
+    if (!entries.has(term)) continue;
+    const rawActual = String(entries.get(term) || '');
+    const actual = straighten(rawActual);
+    if (actual === expected) {
+      continue;
+    }
+    const exactTermLookup = Object.prototype.hasOwnProperty.call(glossary, term);
+    if ((exactTermLookup && !actual.includes(expected)) || (!exactTermLookup && !actual.includes(expected))) {
+      violations.push({ key: term, value: rawActual, expected: expectedRaw });
+    } else if (hasRemainder(actual, term)) {
+      violations.push({ key: term, value: rawActual, expected: expectedRaw + ' (no English remainder)' });
+    }
+  }
+  return violations;
 }
 
 // Remove translations whose English key the author no longer ships. This is
@@ -448,6 +503,30 @@ function readGlossary() {
   return glossary;
 }
 
+function readReviewedOverrides() {
+  // Exact reviewed translations are the highest priority source. The workflow
+  // applies this file before translating, and every model path re-applies it
+  // afterward so a model can never downgrade a vetted line.
+  const file = path.join(toolRoot, 'tools', 'zhcn-overrides.json');
+  if (!fs.existsSync(file)) return {};
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  return data;
+}
+
+function enforceReviewedOverrides(data, allowedKeys) {
+  const overrides = readReviewedOverrides();
+  let locked = 0;
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!allowedKeys.has(key)) continue;
+    if (typeof value !== 'string' || !value.trim()) continue;
+    data[key] = value;
+    locked++;
+  }
+  if (locked) console.log(`Reviewed override lock: ${locked} entr${locked === 1 ? 'y' : 'ies'}`);
+  return data;
+}
+
 function retryable(error) {
   return error && (error.retryable === true || error.timeout === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
 }
@@ -483,7 +562,17 @@ function highRisk(key, ref) {
   const holes = (text.match(/%(?:%|[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g) || []).length;
   const clauses = (text.match(/[.;:!?]|\b(?:and|or|but|if|when|while|unless|before|after)\b/gi) || []).length;
   const moduleName = String(ref || '').split(/[/:]/)[0];
-  return text.length >= 80 || holes >= 2 || clauses >= 2 || /(?:^|[/_-])(?:new|unreleased)(?:[/_.-]|$)/i.test(moduleName);
+  // A tooltip/API error whose vocabulary is a fixed enum is easy for a model
+  // to translate as prose; those English values must be preserved exactly.
+  const technicalEnum = /\bkind\s*\([^)]*\b(?:unit|item|spell|world|compare)\b/i.test(text);
+  const commandHeavy = /^\/[A-Za-z]/.test(text) && (/--/.test(text) || clauses >= 1 || text.length >= 40);
+  // Loot-roll "pass" means "give up the roll", not "succeed". These short
+  // strings are deceptively risky and were wrong in an earlier automated pass.
+  const rollPassContext = /\b(?:passed|roll|rolled|rolling|need|greed)\b/i.test(text)
+    || /\bpassed\b/i.test(String(ref || ''));
+  return text.length >= 80 || holes >= 2 || clauses >= 2
+    || /(?:^|[/_-])(?:new|unreleased)(?:[/_.-]|$)/i.test(moduleName)
+    || technicalEnum || commandHeavy || rollPassContext;
 }
 
 function nearbyContext(cat, key, refs) {
@@ -544,11 +633,14 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
     'Return only a JSON object mapping every input key to a Chinese string; no markdown.',
     'Preserve every printf placeholder exactly: %s, %d, %.0f, %.2f, %%.',
     'Preserve color and texture codes exactly: |cAARRGGBB, |r, |T...|t.',
-    'Use concise, natural mainland Chinese UI language.',
-    'Use these approved terms: 爆击, 微缩地图, 鼠标提示, 潜行者.',
+    'Use concise, natural mainland Chinese UI language in the style of the Simplified Chinese World of Warcraft client: short UI labels, no translationese, and official-sounding wording for combat, bags, bars, quests and social text.',
+    'Match the reviewed tone of the #138 auction-house and loot-roll strings: conversational but compact, use 常规价格 for usual price, 拍卖行 for Auction House, 一口价 for buyout, 上架 for post, 在售 for up, 背包 for bags, 邮箱 for mailbox, 金币 for gold, 掷骰 for roll, 拾取掷骰 for loot roll, 施法条 for cast bar, 姓名板 for nameplate, and 鼠标提示 for tooltip.',
+    'Use these approved terms: 爆击, 微缩地图, 鼠标提示, 潜行者, 常规, 密语, 伤害统计条图标, 浮动战斗信息, 拾取, 施法条, 姓名板, 单位框体, 小队, 团队, 公会, 战场, 竞技场.',
     'Keep PvP, PvE, RP, DPS, HPS, NPC, UI and addon names in English.',
     'Do not translate slash commands, setting keys, font names, URLs or code identifiers.',
     'If a string is a full sentence, keep its meaning and all conditions; do not omit clauses.',
+    'Exact reviewed entries in the approved translation memory must be kept verbatim; they outrank glossary guesses and model style.',
+    'In loot-roll context, pass/passed means give up the roll: Pass=放弃, You passed.=你已放弃., Time ran out, so you passed.=时间耗尽，你已放弃., Everyone passed.=所有人都放弃了.; never translate these as 通过.',
     'Use the supplied reviewed pairs as translation memory for terminology.',
     ...(opts.feedback ? ['A previous validated attempt failed: ' + opts.feedback, 'Correct that exact problem and return the full JSON object again.'] : []),
     'Use nearby_ui_text only to keep the same terminology and tone; never return it as a translation.',
@@ -684,7 +776,14 @@ async function requestBatch(batch, memory, opts = {}) {
   }
   if (last && last.outputError) throw last;
   if (last && !retryable(last)) throw last;
-  throw new Error('AI batch failed after ' + tries + ' attempts: ' + (last && (last.message || last)));
+  const deferred = new Error('AI batch failed after ' + tries + ' attempts: ' + (last && (last.message || last)));
+  deferred.deferred = true;
+  deferred.retryable = true;
+  if (last) {
+    deferred.status = last.status;
+    deferred.timeout = last.timeout;
+  }
+  throw deferred;
 }
 
 async function translate() {
@@ -730,16 +829,40 @@ async function translate() {
           Object.assign(result, repaired);
           writeCheckpoint(result);
         } catch (repairError) {
-          console.error(`AI repair pass failed: ${repairError.message || repairError}`);
+          if (repairError.deferred === true || retryable(repairError)) {
+            console.error(`AI repair pass deferred: ${repairError.message || repairError}`);
+          } else {
+            console.error(`AI repair pass failed: ${repairError.message || repairError}`);
+          }
         }
       }
       for (const [key] of retryRows) {
-        if (!(key in repaired)) failed.push({ key, error: String(e.message || e) });
+        if (!(key in repaired)) {
+          failed.push({
+            key,
+            error: String(e.message || e),
+            deferred: e.deferred === true || retryable(e),
+          });
+        }
       }
     }
   }
   if (failed.length) {
-    console.error(`Translation incomplete: ${failed.length} AI failures. Progress checkpoint kept for the next run.`);
+    const deferred = failed.filter((item) => item.deferred).length;
+    const reportPath = path.join(root, 'tools', 'reports', 'zhcn-ai.json');
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(reportPath, JSON.stringify({
+      status: deferred === failed.length ? 'deferred' : 'failed',
+      translations: result,
+      failed,
+      reviewFailures: [],
+    }, null, 2) + '\n', 'utf8');
+    if (deferred === failed.length) {
+      console.error(`Translation deferred: ${deferred} temporary API failure(s). Progress checkpoint kept for the next run.`);
+      console.log('::notice::Translation deferred because of a temporary API issue; this run is not a translation-quality failure.');
+      process.exit(2);
+    }
+    console.error(`Translation incomplete: ${failed.length} AI failures (${deferred} deferred). Progress checkpoint kept for the next run.`);
     process.exit(1);
   }
 
@@ -772,11 +895,18 @@ async function translate() {
   console.log('High-risk strings reviewed: ' + risky.length + (reviewFailures.length ? ' (' + reviewFailures.length + ' failed)' : ''));
   const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-  fs.writeFileSync(reportPath, JSON.stringify({ translations: result, failed, reviewFailures }, null, 2) + "\n", "utf8");
+  fs.writeFileSync(reportPath, JSON.stringify({
+    status: 'success',
+    translations: result,
+    failed,
+    reviewFailures,
+    terminology,
+  }, null, 2) + "\n", "utf8");
 
   // Write the locale only after every batch succeeded, and run the strict
   // check once more right before writing. A failed run leaves the file
   // untouched, so a retry always starts from a clean base.
+  enforceReviewedOverrides(result, new Set(cat.keys()));
   applyData(result, "AI translation", { replace: true });
   const after = report();
   if (after.missing.length || after.english.length || after.bad.length || after.stale.length) {
@@ -870,6 +1000,7 @@ async function translateConsensus() {
       if (allowed.has(key)) final[key] = value;
     }
   }
+  enforceReviewedOverrides(final, allowed);
   applyData(final, "multi-model consensus", { replace: true });
   prune();
   console.log(`Consensus pass wrote ${Object.keys(final).length} entries.`);
@@ -950,6 +1081,7 @@ async function rebuildAll() {
     }
   }
   console.log(`Rebuild finished with ${Object.keys(final).length} entries.`);
+  enforceReviewedOverrides(final, allowed);
   const ordered = Object.keys(final).sort().map((k) => `L[${luaQuote(k)}] = ${luaQuote(final[k])}`);
   fs.writeFileSync(localePath, "-- Simplified Chinese (zhCN).\nlocal _, DUI = ...\nif DUI.LOCALE ~= \"zhCN\" then return end\nlocal L = DUI.L\n\n" + ordered.join("\n") + "\n", "utf8");
   report();
@@ -977,7 +1109,15 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint };
+module.exports = { readGlossary, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint };
+
+
+
+
+
+
+
+
 
 
 

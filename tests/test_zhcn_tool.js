@@ -136,11 +136,15 @@ async function main() {
   const generated = readTranslations(generatedTable);
   assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
 
-  const { highRisk, batchSize, requestModel, reviewModel, reviewModels } = require(toolPath);
+  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), false);
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
   assert.equal(highRisk('%s and %d', 'Bags/Options.lua:1'), true, 'multiple placeholders are high risk');
+  assert.equal(highRisk('Choose a kind (unit, item, spell, world or compare)', 'Tooltip.lua:10'), true, 'technical enum context is high risk');
+  assert.equal(highRisk('/dui install --force and reload', 'Commands.lua:4'), true, 'command-heavy strings are high risk');
+  assert.equal(highRisk('You passed.', 'LootRoll.lua:20'), true, 'loot-roll pass context is high risk');
+  assert.equal(highRisk('Time ran out, so you passed.', 'LootRoll.lua:21'), true, 'timed-out loot-roll pass is high risk');
 
   const oldBatch = process.env.ZHCN_BATCH_SIZE;
   delete process.env.ZHCN_BATCH_SIZE;
@@ -211,6 +215,42 @@ async function main() {
   for (const [key, value] of Object.entries(requiredGlossary)) {
     assert.equal(glossary[key], value, "glossary must lock " + JSON.stringify(key));
   }
+  const expandedGlossary = {
+    "Buff": "增益",
+    "Debuff": "减益",
+    "Cooldown": "冷却",
+    "Threat": "仇恨",
+    "Tank": "坦克",
+    "Healer": "治疗",
+    "Damage": "伤害",
+    "Gear": "装备",
+    "Specialization": "专精",
+    "Talent": "天赋",
+    "Action bar": "动作条",
+    "Auction House": "拍卖行",
+    "Dungeon": "副本",
+    "Haste": "急速",
+    "Mastery": "精通",
+    "Versatility": "全能",
+    "Enchant": "附魔",
+    "World quest": "世界任务",
+  };
+  for (const [key, value] of Object.entries(expandedGlossary)) {
+    assert.equal(glossary[key], value, "expanded glossary must lock " + JSON.stringify(key));
+  }
+
+  assert.deepEqual(terminologyViolations(new Map([["General", "常规"]])), []);
+  assert.equal(terminologyViolations(new Map([["General", "综合"]])).length, 1, "General must use 常规");
+  assert.equal(terminologyViolations(new Map([["General channel", "综合频道"]])).length, 0);
+  assert.equal(terminologyViolations(new Map([["Whispers", "密语"]])).length, 0);
+  assert.equal(terminologyViolations(new Map([["Whispers", "私聊"]])).length, 1, "Whispers must use 密语");
+  assert.equal(terminologyViolations(new Map([["Grow direction", "延伸方向"]])).length, 0);
+  assert.equal(terminologyViolations(new Map([["Grow direction", "增长方向"]])).length, 1, "reviewed Grow direction wording must be locked");
+  assert.equal(terminologyViolations(new Map([["A full scan reads the whole Auction House in about a minute.", "完整扫描会读取整个拍卖行。"]])).length, 0);
+  assert.equal(terminologyViolations(new Map([["Auction House", "拍卖行需要一点时间"]])).length, 0);
+  assert.equal(terminologyViolations(new Map([["Auction House", "Auction House 需要一点时间"]])).length, 1, "an English glossary term inside a Chinese value must be caught");
+  assert.equal(terminologyViolations(new Map([["Request invite", "请求邀请"]])).length, 0, "verb need must not be mistaken for Need=需求");
+  assert.equal(terminologyViolations(new Map([["%s needs a reload to take effect. Reload now?", "%s需要重载界面才能生效。现在重载吗？"]])).length, 0, "needs in prose must not be mistaken for Need=需求");
 
   assert.equal(retryable({ status: 429 }), true);
   assert.equal(retryable({ status: 503 }), true);
@@ -350,6 +390,7 @@ async function main() {
         assert.match(payload.messages[0].content, /Required glossary:/);
         assert.match(payload.messages[0].content, /"Focus Target":"焦点目标"/);
         assert.match(payload.messages[0].content, /"tooltip":"鼠标提示"/);
+        assert.match(payload.messages[0].content, /Match the reviewed tone of the #138 auction-house and loot-roll strings/);
         const userPayload = JSON.parse(payload.messages[1].content);
         assert.equal(userPayload.strings_to_translate[0].source_location, "Some.lua:10");
         assert.ok(Array.isArray(userPayload.strings_to_translate[0].nearby_ui_text), "nearby context must be sent");
@@ -412,15 +453,39 @@ async function main() {
     assert.equal(calls, 1, "an English-only retranslation must fail, not reach the PR");
 
     calls = 0;
-    await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
-      retries: 2,
-      wait: async () => {},
-      fetchImpl: async () => {
-        calls += 1;
-        return fakeResponse(503, "still down");
-      },
-    }), /failed after 2 attempts/);
+    let deferredError;
+    try {
+      await requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
+        retries: 2,
+        wait: async () => {},
+        fetchImpl: async () => {
+          calls += 1;
+          return fakeResponse(503, "still down");
+        },
+      });
+    } catch (e) {
+      deferredError = e;
+    }
+    assert.match(deferredError && deferredError.message, /failed after 2 attempts/);
+    assert.equal(deferredError && deferredError.deferred, true, "a temporary API failure must be deferred");
+    assert.equal(deferredError && deferredError.status, 503);
     assert.equal(calls, 2);
+
+    let deterministicError;
+    try {
+      await requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
+        retries: 3,
+        wait: async () => {},
+        fetchImpl: async () => {
+          calls += 1;
+          return fakeResponse(200, completion(JSON.stringify({ Ready: "Ready." })));
+        },
+      });
+    } catch (e) {
+      deterministicError = e;
+    }
+    assert.match(deterministicError && deterministicError.message, /left the string in English/);
+    assert.notEqual(deterministicError && deterministicError.deferred, true, "a quality failure must not be deferred");
 
     calls = 0;
     const splitWaits = [];
