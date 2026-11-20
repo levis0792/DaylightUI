@@ -106,7 +106,7 @@ const ALLOWED_ENGLISH = new Set([
   "Varela Round", "Flat", "Custom", "Patreon", "Ko-fi",
   "EllesmereUI", "DaylightMogul", "SkillUp", "SkillUp Forever",
   // Real addon names that are allowed to appear untranslated in a Chinese sentence.
-  "Clique", "Bartender", "Blizzard", "ElvUI", "WeakAuras", "Details", "OmniCC", "Masque",
+  "Clique", "Bartender", "Blizzard", "ElvUI", "WeakAuras", "Details", "OmniCC", "Masque", "GatherMate2", "HandyNotes",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
 ]);
@@ -151,7 +151,7 @@ function stripCommandsAndCode(value) {
     // Remove a command and its ASCII arguments; the rest of the sentence is
     // still checked, so text after a command is not silently skipped.
     .replace(/\/[A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z0-9_%<>=|.-]+)*/g, "")
-    .replace(/[/_.\[\]{}()<>:=+*\-:、。；！？（）【】《》“”‘’…—]+/g, " ")
+    .replace(/[/_.\[\]{}()<>:=+*\-:，、。；：！？（）【】《》“”‘’…—]+/g, " ")
     .trim();
 }
 
@@ -196,13 +196,13 @@ function englishLeftover(key, value) {
       !isAllowedTechnical(w) &&
       !UI_ACTION_WORDS.has(w.toLowerCase());
     const isKeywordPage = /\b(?:q>|ilvl>|boe\s*&|gear\s*,)/i.test(String(key));
-    const ascii = words.map((w) => (w.match(/[A-Za-z]+/g) || []).join(" ")).map((w) => w.trim()).filter(Boolean).flatMap((w) => w.split(/\s+/));
+    const ascii = words.filter((w) => !hasHan(w));
     const isBoundary = (w) => !isOrdinary(w);
     if (ascii.length && words.some((w) => hasHan(w)) && ascii.every((w) => ALLOWED_ENGLISH.has(w) || MIXED_ASCII_WORDS.has(w.toLowerCase()) || isAllowedTechnical(w))) return false;
     let run = 0;
     let longest = 0;
-    for (const w of ascii) {
-      run = isOrdinary(w) && !isBoundary(w) ? run + 1 : 0;
+    for (const w of words) {
+      run = !hasHan(w) && isOrdinary(w) && !isBoundary(w) ? run + 1 : 0;
       if (run > longest) longest = run;
     }
     if (longest >= 3 && !isKeywordPage) return true;
