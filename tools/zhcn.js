@@ -532,7 +532,7 @@ function clearCheckpoint() {
   try { fs.rmSync(checkpointPath, { force: true }); } catch (e) {}
 }
 
-function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
+async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
   const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
   if (!key) throw new Error('Repository secret API_KEY is not set');
   const base = (process.env.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1').replace(/\/$/, '');
