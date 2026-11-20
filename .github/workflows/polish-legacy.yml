@@ -1,0 +1,140 @@
+name: polish-legacy
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model for polish run (blank uses deepseek-v4.1-flash)"
+        required: false
+        type: string
+        default: "deepseek-v4.1-flash"
+      limit:
+        description: "How many pending candidates to review (0 = no limit, e.g. 30 for a trial)"
+        required: false
+        type: string
+        default: "0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: polish-legacy
+  cancel-in-progress: false
+
+run-name: "polish-legacy ${{ inputs.model || 'deepseek-v4.1-flash' }} limit=${{ inputs.limit || '0' }}"
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: dayightt/DaylightUI
+      ZHCN_BRANCH: automation/zhcn
+      API_KEY: ${{ secrets.API_KEY }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
+      POLISH_MODEL: ${{ inputs.model || 'deepseek-v4.1-flash' }}
+      POLISH_LIMIT: ${{ inputs.limit || '0' }}
+      POLISH_BATCH_SIZE: ${{ vars.POLISH_BATCH_SIZE || '20' }}
+      POLISH_RETRIES: ${{ vars.POLISH_RETRIES || '4' }}
+      POLISH_RETRY_BASE_MS: ${{ vars.POLISH_RETRY_BASE_MS || '1500' }}
+      POLISH_TIMEOUT_MS: '180000'
+    steps:
+      - name: Check out maintenance tools
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install LuaJIT
+        run: sudo apt-get update -q && sudo apt-get install -y -q luajit
+
+      - name: Fetch the author's current main
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream main
+          sha=$(git rev-parse upstream/main)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short "$sha")" >> "$GITHUB_OUTPUT"
+
+      - name: Stage tools outside the reviewed locale checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/polish-tools"
+          mkdir -p "${RUNNER_TEMP}/polish-tools"
+          cp -a tools "${RUNNER_TEMP}/polish-tools/tools"
+
+      - name: Build reviewed locale against current upstream keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "origin/${ZHCN_BRANCH}:Locales/zhCN.lua" > "${RUNNER_TEMP}/zhcn-fork.lua"
+          git switch -C "${ZHCN_BRANCH}" upstream/main
+          test -f tools/locale.lua
+          python3 tools/fetch_blizzard.py
+          luajit tools/locale.lua keys > "${RUNNER_TEMP}/zhcn-keys.txt"
+          export ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt"
+          export ZHCN_ROOT="$GITHUB_WORKSPACE"
+          node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" sync "${RUNNER_TEMP}/zhcn-fork.lua"
+          node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" prune
+          node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" dedupe
+          if [ -f "${RUNNER_TEMP}/polish-tools/tools/zhcn-overrides.json" ]; then
+            node "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" override "${RUNNER_TEMP}/polish-tools/tools/zhcn-overrides.json"
+          fi
+          cp "${RUNNER_TEMP}/polish-tools/tools/zhcn.js" tools/zhcn.js
+          cp "${RUNNER_TEMP}/polish-tools/tools/zhcn-glossary.json" tools/zhcn-glossary.json
+          cp "${RUNNER_TEMP}/polish-tools/tools/zhcn-overrides.json" tools/zhcn-overrides.json
+          cp -a "${RUNNER_TEMP}/polish-tools/tools/lib" tools/lib
+
+      - name: Scan high-risk legacy translations
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/polish-legacy.js scan
+
+      - name: Draft conservative review
+        id: review
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/polish-legacy.js run
+          test -f tools/reports/zhcn-polish-review.md
+          test -f tools/reports/zhcn-polish-diff.json
+          if ! git diff --quiet -- Locales/zhCN.lua; then
+            echo "::error::polish-legacy run changed Locales/zhCN.lua; aborting"
+            exit 1
+          fi
+
+      - name: Add review to job summary
+        if: always() && steps.review.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## zhCN polish-legacy review"
+            echo
+            echo "Model: \`${POLISH_MODEL}\`"
+            echo
+            echo "Limit: \`${POLISH_LIMIT}\`"
+            echo
+            cat tools/reports/zhcn-polish-review.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload review artifacts
+        if: always() && steps.review.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhcn-polish-review-${{ github.run_id }}
+          path: |
+            tools/reports/zhcn-polish-review.md
+            tools/reports/zhcn-polish-diff.json
+          if-no-files-found: error

@@ -297,10 +297,12 @@ async function doRun() {
   const cp = readCheckpoint(scan.sha);
   cp.model = model;
 
-  const pending = scan.candidates.filter((row) => !cp.done[row.key] && zhcn.validTranslation(row.key, row.current) !== undefined);
+  const allPending = scan.candidates.filter((row) => !cp.done[row.key] && zhcn.validTranslation(row.key, row.current) !== undefined);
+  const limit = integerEnv("POLISH_LIMIT", 0, 0);
+  const pending = limit > 0 ? allPending.slice(0, limit) : allPending;
   const batchSize = integerEnv("POLISH_BATCH_SIZE", 10, 1);
   const fetchImpl = globalThis.fetch;
-  console.log(`run: model=${model}, temperature=0.1, candidates=${scan.candidates.length}, pending=${pending.length}, batch=${batchSize}`);
+  console.log(`run: model=${model}, temperature=0.1, candidates=${scan.candidates.length}, pending=${pending.length}, remaining=${allPending.length}, limit=${limit || "none"}, batch=${batchSize}`);
 
   for (let offset = 0; offset < pending.length; offset += batchSize) {
     const batch = pending.slice(offset, offset + batchSize);
@@ -348,6 +350,7 @@ async function doRun() {
     model,
     temperature: 0.1,
     candidates: scan.candidates.length,
+    limit,
     reviewed: Object.keys(cp.done).length,
     changeCount: changes.length,
     changes,
@@ -359,6 +362,7 @@ async function doRun() {
     "# zhCN polish-legacy review",
     "",
     `- Candidate entries: ${diff.candidates}`,
+    `- Run limit: ${diff.limit || "none"}`,
     `- Reviewed entries: ${diff.reviewed}`,
     `- Suggested changes: ${diff.changeCount}`,
     `- Model: ${model}`,
