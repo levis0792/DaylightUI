@@ -179,7 +179,7 @@ async function main() {
   assert.equal(typeof translateConsensus, "function", "consensus pass is available");
   const { relatedMemory } = require(toolPath);
   assert.deepEqual(relatedMemory({ exact: new Map([["Bar animation", "状态条动画"], ["Unrelated", "无关"]]) }, [["Bar styles", "x"]]), [["Bar animation", "状态条动画"]]);
-  const { requestOnce, requestBatch, readGlossary, retryable } = require(toolPath);
+  const { requestOnce, requestBatch, readGlossary, retryable, enforceReviewedOverrides } = require(toolPath);
   const { englishLeftover } = require(toolPath);
 
   const glossary = readGlossary();
@@ -243,9 +243,19 @@ async function main() {
   assert.equal(terminologyViolations(new Map([["General", "综合"]])).length, 1, "General must use 常规");
   assert.equal(terminologyViolations(new Map([["General channel", "综合频道"]])).length, 0);
   assert.equal(terminologyViolations(new Map([["Whispers", "密语"]])).length, 0);
-  assert.equal(terminologyViolations(new Map([["Whispers", "私聊"]])).length, 1, "Whispers must use 密语");
+  assert.equal(terminologyViolations(new Map([["Whispers", "私聊"]])).length, 0, "reviewed overrides stay exempt from terminology warnings");
   assert.equal(terminologyViolations(new Map([["Grow direction", "延伸方向"]])).length, 0);
-  assert.equal(terminologyViolations(new Map([["Grow direction", "增长方向"]])).length, 1, "reviewed Grow direction wording must be locked");
+  assert.equal(terminologyViolations(new Map([["Grow direction", "增长方向"]])).length, 0, "reviewed overrides stay exempt from terminology warnings");
+  const lockedTranslations = enforceReviewedOverrides({
+    Whispers: "私聊",
+    "Grow direction": "增长方向",
+    Extra: "额外",
+  }, new Set(["Whispers", "Grow direction"]));
+  assert.deepEqual(lockedTranslations, {
+    Whispers: "密语",
+    "Grow direction": "延伸方向",
+    Extra: "额外",
+  }, "reviewed overrides must lock approved wording");
   assert.equal(terminologyViolations(new Map([["A full scan reads the whole Auction House in about a minute.", "完整扫描会读取整个拍卖行。"]])).length, 0);
   assert.equal(terminologyViolations(new Map([["Auction House", "拍卖行需要一点时间"]])).length, 0);
   assert.equal(terminologyViolations(new Map([["Auction House", "Auction House 需要一点时间"]])).length, 1, "an English glossary term inside a Chinese value must be caught");
