@@ -49,7 +49,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: zhcn-translation
+  group: zhcn-update
   cancel-in-progress: false
 
 run-name: "zhCN ${{ inputs.trigger_note || inputs.upstream_sha || github.run_id }}"
