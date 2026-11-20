@@ -4,7 +4,7 @@ on:
   # GitHub schedules are best effort. The NAS is an optional extra trigger;
   # the state branch and concurrency group make duplicate triggers harmless.
   schedule:
-    - cron: "17 */2 * * *"
+    - cron: '11,41 * * * *'
   workflow_dispatch:
     inputs:
       upstream_sha:
