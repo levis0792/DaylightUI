@@ -607,8 +607,18 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
   for (const [k] of batch) {
     let v = parsed[k];
     if ((typeof v !== 'string' || !v.trim()) && batch.length === 1) {
-      const values = Object.values(parsed).filter((item) => typeof item === 'string' && item.trim());
-      if (values.length === 1) v = values[0];
+      const values = Object.entries(parsed).filter(
+        ([, item]) => typeof item === 'string' && item.trim(),
+      );
+      // A one-string reply is safe only when it is keyed for this row (or a
+      // normalized match). A translation returned under a different key must
+      // never be silently assigned to this source string.
+      if (
+        values.length === 1 &&
+        (values[0][0] === k || normal(values[0][0]) === normal(k))
+      ) {
+        v = values[0][1];
+      }
     }
     if (typeof v !== 'string' || !v.trim()) throw Object.assign(new Error('AI omitted: ' + JSON.stringify(k) + '; returned keys: ' + JSON.stringify(Object.keys(parsed))), { outputError: true });
     if (v.includes('\uFFFD')) throw Object.assign(new Error('AI returned a replacement character: ' + JSON.stringify(k)), { outputError: true });
