@@ -61,5 +61,6 @@
   "Waiting on %d": "等待 %d 人",
   "You won with %s %d!": "你以 %s %d 获胜！",
   "That was the last of %s.": "这已是最后的 %s。",
-  "Someone put up %s at %s (checked %s), %s under yours. Cancel it and post again from Sell to be the cheapest.": "有人上架了 %s，单价 %s（检查于 %s），比你的低 %s。取消后从“出售”页重新上架即可成为最低价。"
+  "Someone put up %s at %s (checked %s), %s under yours. Cancel it and post again from Sell to be the cheapest.": "有人上架了 %s，单价 %s（检查于 %s），比你的低 %s。取消后从“出售”页重新上架即可成为最低价。",
+  "Aa": "Aa"
 }

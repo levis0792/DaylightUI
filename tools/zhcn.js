@@ -89,6 +89,8 @@ const ALLOWED_ENGLISH = new Set([
   "Plater", "Platynator", "PrettyTooltip", "Questie", "Raider.IO", "RestedXP Guides", "Threat Plates", "TSM",
   "Archivo Narrow", "Arial Narrow", "Barlow Condensed", "Expressway",
   "Fira Sans", "Lato", "PT Sans Narrow", "Poppins", "Russo One",
+  // Font preview label shown by the picker; keep the rendered sample.
+  "Aa",
   "DaylightUI", "DaylightUI Discord",
   // Style and addon names users see in the UI, plus the donation page.
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",

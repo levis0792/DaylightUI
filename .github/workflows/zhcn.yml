@@ -292,8 +292,13 @@ jobs:
             command=translate
             [ "${{ inputs.mode }}" = "consensus" ] && command=consensus
             [ "${{ inputs.mode }}" = "rebuild" ] && command=rebuild
-            ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" "$command" 2>&1 | tee /tmp/zhcn-ai.log
-            rc=${PIPESTATUS[0]}
+            set +e
+            if ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tools/zhcn.js" "$command" 2>&1 | tee /tmp/zhcn-ai.log; then
+              rc=0
+            else
+              rc=${PIPESTATUS[0]}
+            fi
+            set -e
             echo "::endgroup::"
             last_detail=$(tail -n 3 /tmp/zhcn-ai.log | tr "\n" " " | cut -c1-1000)
             if [ "$rc" -eq 0 ]; then
