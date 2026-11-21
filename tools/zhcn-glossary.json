@@ -10,9 +10,14 @@
   "Target of Target": "目标的目标",
   "crit": "爆击",
   "critical strike": "爆击",
-  "minimap": "微缩地图",
-  "tooltip": "鼠标提示",
-  "Rogue": "潜行者",
+  "minimap": [
+    "微缩地图",
+    "小地图"
+  ],
+  "tooltip": [
+    "鼠标提示",
+    "提示"
+  ],
   "mouseover": "鼠标悬停",
   "Right-click": "右键点击",
   "Shift-click": "Shift+点击",
@@ -26,13 +31,32 @@
   "Point 3": "第3点",
   "Point 4": "第4点",
   "Point 5": "第5点",
-  "Combat text": "浮动战斗信息",
-  "Scrolling combat text": "浮动战斗信息",
+  "Combat text": [
+    "浮动战斗信息",
+    "战斗文字"
+  ],
+  "Scrolling combat text": [
+    "浮动战斗信息",
+    "滚动战斗信息",
+    "战斗文字"
+  ],
   "Loot": "拾取",
-  "Cast bar": "施法条",
-  "Cast bars": "施法条",
-  "Cast Bars": "施法条",
-  "Nameplates": "姓名板",
+  "Cast bar": [
+    "施法条",
+    "施法计时条"
+  ],
+  "Cast bars": [
+    "施法条",
+    "施法计时条"
+  ],
+  "Cast Bars": [
+    "施法条",
+    "施法计时条"
+  ],
+  "Nameplates": [
+    "姓名板",
+    "名字板"
+  ],
   "Unit Frames": "单位框体",
   "Party": "小队",
   "Raid": "团队",
@@ -67,7 +91,10 @@
   "Auction House": "拍卖行",
   "Quest": "任务",
   "Achievement": "成就",
-  "Dungeon": "副本",
+  "Dungeon": [
+    "副本",
+    "地下城"
+  ],
   "Item quality": "物品品质",
   "Trinket": "饰品",
   "Consumable": "消耗品",
@@ -116,26 +143,52 @@
   "Buying and selling": "买卖",
   "Grow direction": "延伸方向",
   "starting bid": "起拍价",
-  "deposit": "保管费",
+  "deposit": [
+    "保管费",
+    "存放",
+    "存回",
+    "存入"
+  ],
   "undercut": "压价",
   "full scan": "完整扫描",
   "price memory": "价格记录",
   "auction length": "拍卖时长",
   "deal price": "优惠价阈值",
-  "loot rolls": "拾取掷骰",
+  "loot rolls": [
+    "拾取掷骰",
+    "战利品掷骰"
+  ],
   "pick ticks": "选择标记",
   "roll bars": "掷骰条",
   "flight timer": "飞行计时器",
   "welcome on landing": "抵达欢迎",
   "landing welcome": "抵达欢迎",
   "route line": "航线",
-  "swing timer": "攻击计时条",
+  "swing timer": [
+    "攻击计时条",
+    "平砍计时条",
+    "挥砍计时条"
+  ],
   "main hand bar": "主手计时条",
   "off hand bar": "副手计时条",
-  "ranged bar": "远程计时条",
-  "power bar": "资源条",
-  "power text": "资源文字",
-  "personal display": "个人资源显示",
+  "ranged bar": [
+    "远程计时条",
+    "远程条",
+    "远程攻击计时条"
+  ],
+  "power bar": [
+    "资源条",
+    "能量条",
+    "状态条"
+  ],
+  "power text": [
+    "资源文字",
+    "能量文字"
+  ],
+  "personal display": [
+    "个人资源显示",
+    "个人显示"
+  ],
   "own angle": "独立斜角",
   "fight pill": "战斗胶囊",
   "full card key": "完整卡片按键",

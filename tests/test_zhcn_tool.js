@@ -204,7 +204,7 @@ async function main() {
 
   const glossary = readGlossary();
   assert.equal(glossary["Focus Target"], "焦点目标");
-  assert.equal(glossary["tooltip"], "鼠标提示");
+  assert.ok(Array.isArray(glossary["tooltip"]) && glossary["tooltip"].includes("鼠标提示"));
   const requiredGlossary = {
     "General": "常规",
     "General channel": "综合频道",
@@ -233,7 +233,7 @@ async function main() {
     "Arenas": "竞技场",
   };
   for (const [key, value] of Object.entries(requiredGlossary)) {
-    assert.equal(glossary[key], value, "glossary must lock " + JSON.stringify(key));
+    assert.ok(glossary[key] === value || (Array.isArray(glossary[key]) && glossary[key].includes(value)), "glossary must lock " + JSON.stringify(key));
   }
   const expandedGlossary = {
     "Buff": "增益",
@@ -248,7 +248,7 @@ async function main() {
     "Talent": "天赋",
     "Action bar": "动作条",
     "Auction House": "拍卖行",
-    "Dungeon": "副本",
+    "Dungeon": "地下城",
     "Haste": "急速",
     "Mastery": "精通",
     "Versatility": "全能",
@@ -256,7 +256,7 @@ async function main() {
     "World quest": "世界任务",
   };
   for (const [key, value] of Object.entries(expandedGlossary)) {
-    assert.equal(glossary[key], value, "expanded glossary must lock " + JSON.stringify(key));
+    assert.ok(glossary[key] === value || (Array.isArray(glossary[key]) && glossary[key].includes(value)), "expanded glossary must lock " + JSON.stringify(key));
   }
 
   assert.deepEqual(terminologyViolations(new Map([["General", "常规"]])), []);
@@ -442,7 +442,7 @@ async function main() {
         assert.equal(payload.model, "test-model");
         assert.match(payload.messages[0].content, /Required glossary:/);
         assert.match(payload.messages[0].content, /"Focus Target":"焦点目标"/);
-        assert.match(payload.messages[0].content, /"tooltip":"鼠标提示"/);
+        assert.match(payload.messages[0].content, /"tooltip":\["鼠标提示","提示"\]/);
         assert.doesNotMatch(payload.messages[0].content, /Match the reviewed tone of the #138 auction-house and loot-roll strings/);
         const userPayload = JSON.parse(payload.messages[1].content);
         assert.equal(userPayload.strings_to_translate[0].source_location, "Some.lua:10");

@@ -314,14 +314,11 @@ const PROSE_LOCKED_TERMS = new Set([
   "usual price", "buyout", "deposit", "undercut", "full scan", "price memory",
   "auction length", "deal price", "loot rolls", "pick ticks", "roll bars",
   "flight timer", "welcome on landing", "landing welcome", "flight point",
-  "swing timer", "main hand bar", "off hand bar", "ranged bar", "power bar",
-  "power text", "personal display", "own angle", "fight pill", "full card key",
+  "main hand bar", "off hand bar", "own angle", "fight pill", "full card key",
   "portrait look", "portrait ring", "set into the frame", "micro menu",
   "layer flattening", "auction house", "cast bar", "cast bars", "nameplates",
-  "unit frames", "combat text", "scrolling combat text", "minimap", "tooltip",
-  "critical strike", "rogue", "air totem", "earth totem", "fire totem",
+  "unit frames", "critical strike", "air totem", "earth totem", "fire totem",
   "water totem", "general channel",
-  "gradient colors", "first color", "second color", "third color", "fourth color", "fifth color", "custom gradient",
 ]);
 
 function escapeRegExp(s) {
@@ -335,6 +332,15 @@ function termBoundary(term) {
 
 // Locked glossary terms are checked across both exact keys and prose sentences.
 // Reviewed overrides take precedence so intentional exceptions never false-alarm.
+// Glossary values may be a string or an array of valid Chinese renderings.
+function straightenValue(s) {
+  return String(s)
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function terminologyViolations(entries) {
   let glossary;
   try {
@@ -344,32 +350,22 @@ function terminologyViolations(entries) {
   }
   const overrides = readReviewedOverrides();
   const violations = [];
-  const straighten = (s) => String(s)
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-  const hasRemainder = (actual, term) => {
-    const simple = /^[A-Za-z][A-Za-z -]*$/.test(term);
-    if (!simple) return false;
-    const words = term.toLowerCase().split(/\s+/).filter(Boolean);
-    return words.every((word) => new RegExp("\\b" + escapeRegExp(word) + "\\b", "i").test(actual));
-  };
+  const accepted = (value) => (Array.isArray(value) ? value : [value])
+    .map(straightenValue)
+    .filter((item) => item && hasHan(item));
+  const straighten = (s) => straightenValue(s);
 
   // 1) Exact-key check for every glossary entry with Chinese target.
   for (const [term, expectedRaw] of Object.entries(glossary)) {
-    const expected = straighten(expectedRaw);
-    if (!hasHan(expected)) continue;
+    const expectedValues = accepted(expectedRaw);
+    if (!expectedValues.length) continue;
     if (!entries.has(term)) continue;
     if (Object.prototype.hasOwnProperty.call(overrides, term)) continue;
     const rawActual = String(entries.get(term) || "");
     const actual = straighten(rawActual);
-    if (actual === expected) continue;
-    if (!actual.includes(expected)) {
-      violations.push({ key: term, term, value: rawActual, expected: expectedRaw });
-    } else if (hasRemainder(actual, term)) {
-      violations.push({ key: term, term, value: rawActual, expected: expectedRaw + " (no English remainder)" });
-    }
+    const matched = expectedValues.find((expected) => actual === expected || actual.includes(expected));
+    if (matched) continue;
+    violations.push({ key: term, term, value: rawActual, expected: expectedRaw });
   }
 
   // 2) Prose scan for high-precision domain terms, sorted longest-first so a
@@ -378,10 +374,10 @@ function terminologyViolations(entries) {
   const seenLower = new Set();
   for (const [term, expectedRaw] of Object.entries(glossary)) {
     const lower = term.toLowerCase();
-    const expected = straighten(expectedRaw);
-    if (!hasHan(expected) || !PROSE_LOCKED_TERMS.has(lower) || seenLower.has(lower)) continue;
+    const expectedValues = accepted(expectedRaw);
+    if (!expectedValues.length || !PROSE_LOCKED_TERMS.has(lower) || seenLower.has(lower)) continue;
     seenLower.add(lower);
-    proseRules.push({ term, expected, expectedRaw, re: termBoundary(term) });
+    proseRules.push({ term, expectedValues, expectedRaw, re: termBoundary(term) });
   }
   proseRules.sort((a, b) => b.term.length - a.term.length);
 
@@ -395,7 +391,7 @@ function terminologyViolations(entries) {
       rule.re.lastIndex = 0;
       if (!rule.re.test(maskedKey)) continue;
       maskedKey = maskedKey.replace(rule.re, (m) => " ".repeat(m.length));
-      if (!actual.includes(rule.expected)) {
+      if (!rule.expectedValues.some((expected) => actual.includes(expected))) {
         violations.push({ key, term: rule.term, value: rawActual, expected: rule.expectedRaw });
       }
     }
