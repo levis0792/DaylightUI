@@ -310,6 +310,7 @@ const PROSE_LOCKED_TERMS = new Set([
   "unit frames", "combat text", "scrolling combat text", "minimap", "tooltip",
   "critical strike", "rogue", "air totem", "earth totem", "fire totem",
   "water totem", "general channel",
+  "gradient colors", "first color", "second color", "third color", "fourth color", "fifth color", "custom gradient",
 ]);
 
 function escapeRegExp(s) {
