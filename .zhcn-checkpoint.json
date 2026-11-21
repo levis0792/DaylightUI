@@ -1,0 +1,14 @@
+{
+  "sha": "439c140e34c47435b5d00dbe5bc1273794c94456",
+  "translations": {
+    "A small icon before each text, in the numbers' color.": "在每段文字前显示一个与数字颜色相同的小图标。",
+    "Custom data bar text color": "自定义数据栏文字颜色",
+    "Custom data text color": "自定义数据文字颜色",
+    "Data bar text color": "数据栏文字颜色",
+    "Data text color": "数据文字颜色",
+    "From gear and buffs for this school, on top of your spell power.": "来自此法术系的装备和增益，计入你的法术强度之上。",
+    "The color of the numbers. Accent color follows your accent along the strip. Pick White or One color if a dark accent is hard to read.": "数字的颜色。“强调色”会沿统计条跟随你的强调色。如果深色强调色不易阅读，请选择“白色”或“单一颜色”。",
+    "The numbers' color when Data bar text color is One color.": "当“数据条文字颜色”设为“单一颜色”时数字的颜色。",
+    "The numbers' color when Data text color is One color.": "“数据文字颜色”设为“单一颜色”时数字的颜色。"
+  }
+}
