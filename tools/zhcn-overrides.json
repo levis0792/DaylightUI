@@ -65,5 +65,12 @@
   "Aa": "Aa",
   "Bid %s on %s.": "出价 %s 竞拍 %s。",
   "Bid %s on %s. It's yours by mail if no one bids more.": "出价 %s 竞拍 %s。若无人出更高价，将通过邮箱归你所有。",
-  "Bought %s for %s: it's in your mailbox.": "已购买 %s，花费 %s：已送达你的邮箱。"
+  "Bought %s for %s: it's in your mailbox.": "已购买 %s，花费 %s：已送达你的邮箱。",
+  "Leave it up with this many cheaper": "有此数量更低价时保持上架",
+  "Get off at %s": "在 %s 降落",
+  "Exit flight": "提前降落",
+  "Cancel for %s": "花费 %s 取消",
+  "under the price": "低于该价格",
+  "bids from %s": "%s 起拍",
+  "Takes all %s parts.": "采用全部 %s 个部件。"
 }
