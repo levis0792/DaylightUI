@@ -761,7 +761,26 @@ function buildSystemPrompt(glossary, opts = {}) {
   }
 
   if (opts.feedback) {
-    baseRules.push("A previous validated attempt failed: " + opts.feedback);
+    const feedback = String(opts.feedback);
+    baseRules.push("A previous validated attempt failed: " + feedback);
+    if (/Placeholder mismatch:/i.test(feedback)) {
+      let sequenceText = null;
+      const sequenceMatch = feedback.match(/expected placeholder order\s+(\[[^\]]*\])/i);
+      if (sequenceMatch) {
+        sequenceText = sequenceMatch[1];
+      } else {
+        const mismatch = feedback.match(/Placeholder mismatch:\s*("(?:\\.|[^"\\])*")/i);
+        if (mismatch) {
+          try {
+            sequenceText = JSON.stringify(specifiers(JSON.parse(mismatch[1])));
+          } catch (_) {}
+        }
+      }
+      if (sequenceText) {
+        baseRules.push("The original English placeholder sequence, in strict left-to-right order, is " + sequenceText + ". Rewrite the Chinese word order so the translated placeholders appear in EXACTLY this same sequence.");
+      }
+      baseRules.push("Never repeat the previously failed translation unchanged; fix the exact placeholder-order mismatch.");
+    }
     baseRules.push("Correct that exact problem and return the full JSON object again.");
   }
 
@@ -770,7 +789,7 @@ function buildSystemPrompt(glossary, opts = {}) {
 }
 
 async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
-  const useReviewEndpoint = opts.review === true && !!process.env.REVIEW_API_KEY;
+  const useReviewEndpoint = opts.review === true && !!process.env.REVIEW_API_KEY && opts.route !== "primary";
   const key = useReviewEndpoint
     ? process.env.REVIEW_API_KEY
     : (process.env.API_KEY || process.env.OPENAI_API_KEY);
@@ -833,7 +852,13 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
     }
     if (typeof v !== "string" || !v.trim()) throw Object.assign(new Error("AI omitted: " + JSON.stringify(k) + "; returned keys: " + JSON.stringify(Object.keys(parsed))), { outputError: true });
     if (v.includes("\uFFFD")) throw Object.assign(new Error("AI returned a replacement character: " + JSON.stringify(k)), { outputError: true });
-    if (!formatOk(k, v)) throw Object.assign(new Error("Placeholder mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
+    if (!formatOk(k, v)) {
+      const expectedOrder = specifiers(k);
+      throw Object.assign(
+        new Error("Placeholder mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v) + "; expected placeholder order " + JSON.stringify(expectedOrder)),
+        { outputError: true, placeholderOrder: expectedOrder, originalEnglish: k, failedTranslation: v },
+      );
+    }
     if (!codesOk(k, v)) throw Object.assign(new Error("Color/texture code mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
     if (!edgeSpacesMatch(k, v)) throw Object.assign(new Error("Leading/trailing space mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
     if (englishLeftover(k, v)) throw Object.assign(new Error("AI left the string in English: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
@@ -882,7 +907,7 @@ async function requestBatch(batch, memory, opts = {}) {
       catch (e) { failed.push({ key: row[0], error: e.message || String(e) }); }
     }
     if (!failed.length) return out;
-    const error = new Error("AI failed for " + failed.length + " of " + batch.length + " strings: " + failed.map((x) => JSON.stringify(x.key)).join(", "));
+    const error = new Error("AI failed for " + failed.length + " of " + batch.length + " strings: " + failed.map((x) => JSON.stringify(x.key) + " (" + x.error + ")").join("; "));
     error.outputError = true;
     error.translations = out;
     error.failedKeys = failed.map((x) => x.key);
@@ -920,6 +945,14 @@ function orderRemainingForContext(keys, cat) {
 
 async function translate(opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
+  const reviewKeyEnabled = !!process.env.REVIEW_API_KEY;
+  const reviewBaseEnabled = !!process.env.REVIEW_BASE_URL;
+  console.log(
+    "AI config: primary model=" + requestModel() +
+    ", review models=" + reviewModels().join(",") +
+    ", independent REVIEW_API_KEY=" + (reviewKeyEnabled ? "enabled" : "disabled") +
+    ", REVIEW_BASE_URL=" + (reviewBaseEnabled ? "enabled" : "disabled"),
+  );
   const { cat, entries, english } = report({ missingOnly: true });
   const missing = [...new Set([
     ...[...cat.keys()].filter((k) => !entries.has(k)),
@@ -963,15 +996,38 @@ async function translate(opts = {}) {
       const retryRows = batch.filter(([key]) => !(key in recovered));
       let repaired = {};
       if (retryRows.length) {
-        try {
-          repaired = await requestBatch(retryRows, translationMemory(new Map([...entries, ...Object.entries(result)])), { fetchImpl, feedback: String(e.message || e) });
-          Object.assign(result, repaired);
-          writeCheckpoint(result);
-        } catch (repairError) {
-          if (repairError.deferred === true || retryable(repairError)) {
-            console.error(`AI repair pass deferred: ${repairError.message || repairError}`);
-          } else {
-            console.error(`AI repair pass failed: ${repairError.message || repairError}`);
+        const useReviewRepair = !!process.env.REVIEW_API_KEY;
+        const repairModels = useReviewRepair ? reviewModels() : [requestModel()];
+        let repairLastError;
+        for (let modelIndex = 0; modelIndex < repairModels.length; modelIndex++) {
+          const model = repairModels[modelIndex];
+          const primaryFallback = useReviewRepair && model === requestModel();
+          if (primaryFallback && repairLastError && modelIndex > 0) {
+            console.log("AI repair fallback to primary model " + model + " after review model failure: " + (repairLastError.message || repairLastError));
+          }
+          try {
+            repaired = await requestBatch(
+              retryRows,
+              translationMemory(new Map([...entries, ...Object.entries(result)])),
+              {
+                fetchImpl,
+                feedback: String(e.message || e),
+                review: useReviewRepair,
+                route: primaryFallback ? "primary" : undefined,
+                model,
+              },
+            );
+            repairLastError = undefined;
+            Object.assign(result, repaired);
+            writeCheckpoint(result);
+            break;
+          } catch (repairError) {
+            repairLastError = repairError;
+            if (repairError.deferred === true || retryable(repairError)) {
+              console.error(`AI repair pass deferred: ${repairError.message || repairError}`);
+            } else {
+              console.error(`AI repair pass failed: ${repairError.message || repairError}`);
+            }
           }
         }
       }
@@ -1026,12 +1082,25 @@ async function translate(opts = {}) {
       ]);
       let reviewed;
       let lastError;
-      for (const model of models) {
+      let previousReviewError;
+      for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
+        const model = models[modelIndex];
+        const primaryFallback = !!process.env.REVIEW_API_KEY && model === requestModel();
+        if (primaryFallback && previousReviewError && modelIndex > 0) {
+          console.log("Review fallback to primary model " + model + " after review model failure: " + (previousReviewError.message || previousReviewError));
+        }
         try {
-          reviewed = await requestBatch(rows, reviewMemory, { fetchImpl, review: true, model });
+          reviewed = await requestBatch(rows, reviewMemory, {
+            fetchImpl,
+            review: true,
+            route: primaryFallback ? "primary" : undefined,
+            model,
+          });
+          previousReviewError = undefined;
           break;
         } catch (e) {
           lastError = e;
+          previousReviewError = e;
           console.error("Review model " + model + " failed for batch " + (i / reviewBatchSize + 1) + ": " + (e.message || e));
         }
       }
@@ -1255,4 +1324,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, orderRemainingForContext };
+module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, orderRemainingForContext, specifiers };

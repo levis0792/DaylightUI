@@ -136,7 +136,7 @@ async function main() {
   const generated = readTranslations(generatedTable);
   assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
 
-  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations } = require(toolPath);
+  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), true, 'short UI labels are high risk');
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
@@ -400,6 +400,13 @@ async function main() {
   fs.rmSync(path.join(root, "tools", "reports"), { recursive: true, force: true });
   delete require.cache[require.resolve(toolPath)];
 
+  const placeholderRepairPrompt = buildSystemPrompt(readGlossary(), {
+    feedback: "Placeholder mismatch: \"Adds up to %.0f to your %s spells' damage.\" -> \"最多提高%s点%.0f法术伤害。\"; expected placeholder order [\"%.0f\",\"%s\"]",
+  });
+  assert.match(placeholderRepairPrompt, /\["%.0f","%s"\]/, "repair prompt must list the original placeholder sequence in order");
+  assert.match(placeholderRepairPrompt, /EXACTLY this same sequence/, "repair prompt must demand strict placeholder order");
+  assert.match(placeholderRepairPrompt, /Never repeat the previously failed translation unchanged/, "repair prompt must forbid repeating the failed translation");
+
   const oldKey = process.env.API_KEY;
   const oldBase = process.env.OPENAI_BASE_URL;
   const oldModelForRequest = process.env.OPENAI_MODEL;
@@ -580,6 +587,39 @@ async function main() {
       const out = await requestOnce([["Ready", "Some.lua:10", [], "就绪"]], { exact: new Map() }, globalThis.fetch, { review: true, model: "review-model" });
       assert.deepEqual(out, { Ready: "已就绪" });
     });
+    let failedReviewAuth;
+    await withServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        failedReviewAuth = req.headers.authorization;
+        const payload = JSON.parse(body);
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "review unavailable" }, model: payload.model }));
+      });
+    }, async (port) => {
+      process.env.REVIEW_BASE_URL = "http://127.0.0.1:" + port;
+      await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, { retries: 1, wait: async () => {}, review: true, model: "review-model" }), /AI request failed \(503\)/);
+    });
+    assert.equal(failedReviewAuth, "Bearer review-key", "review retries must still use the independent review key");
+
+    let primaryFallbackAuth;
+    await withServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        primaryFallbackAuth = req.headers.authorization;
+        const payload = JSON.parse(body);
+        assert.equal(payload.model, "primary-model", "primary fallback must use the configured primary model");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(completion(JSON.stringify({ Ready: "已就绪" }))));
+      });
+    }, async (port) => {
+      process.env.OPENAI_BASE_URL = "http://127.0.0.1:" + port;
+      const out = await requestOnce([["Ready", "Some.lua:10"]], { exact: new Map() }, globalThis.fetch, { model: "primary-model", route: "primary" });
+      assert.deepEqual(out, { Ready: "已就绪" });
+    });
+    assert.equal(primaryFallbackAuth, "Bearer test-key", "primary fallback route must ignore REVIEW_API_KEY");
   } finally {
     if (oldKey === undefined) delete process.env.API_KEY; else process.env.API_KEY = oldKey;
     if (oldBase === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = oldBase;
