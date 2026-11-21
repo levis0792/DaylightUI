@@ -136,7 +136,7 @@ async function main() {
   const generated = readTranslations(generatedTable);
   assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
 
-  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt } = require(toolPath);
+  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, englishLeftover, validTranslation } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), true, 'short UI labels are high risk');
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
@@ -190,7 +190,6 @@ async function main() {
   const { relatedMemory } = require(toolPath);
   assert.deepEqual(relatedMemory({ exact: new Map([["Bar animation", "状态条动画"], ["Unrelated", "无关"]]) }, [["Bar styles", "x"]]), [["Bar animation", "状态条动画"]]);
   const { requestOnce, requestBatch, readGlossary, retryable, enforceReviewedOverrides } = require(toolPath);
-  const { englishLeftover } = require(toolPath);
 
   const glossary = readGlossary();
   assert.equal(glossary["Focus Target"], "焦点目标");
@@ -314,7 +313,7 @@ async function main() {
 
   // Author-source changes: removed keys must go, changed English keys must be
   // translated, and an English value must never be reused as memory.
-  const { validTranslation, prune, sync } = require(toolPath);
+  const { prune, sync } = require(toolPath);
   assert.equal(validTranslation("Search", "Search"), false, "an English value is not reusable memory");
   assert.equal(validTranslation("Search", "搜索"), true);
   assert.equal(validTranslation("|cff00ff00Hi|r", "你好"), false, "a dropped color code is invalid");
@@ -399,6 +398,10 @@ async function main() {
   fs.rmSync(retryRoot, { recursive: true, force: true });
   fs.rmSync(path.join(root, "tools", "reports"), { recursive: true, force: true });
   delete require.cache[require.resolve(toolPath)];
+
+  assert.equal(englishLeftover("Atkinson Hyperlegible", "Atkinson Hyperlegible"), false, "locked override English values are allowed");
+  assert.equal(validTranslation("Atkinson Hyperlegible", "Atkinson Hyperlegible"), true, "locked override values stay valid");
+  assert.equal(englishLeftover("Open", "Open"), true, "ordinary English UI words remain blocked");
 
   const placeholderRepairPrompt = buildSystemPrompt(readGlossary(), {
     feedback: "Placeholder mismatch: \"Adds up to %.0f to your %s spells' damage.\" -> \"最多提高%s点%.0f法术伤害。\"; expected placeholder order [\"%.0f\",\"%s\"]",
@@ -604,22 +607,29 @@ async function main() {
     assert.equal(failedReviewAuth, "Bearer review-key", "review retries must still use the independent review key");
 
     let primaryFallbackAuth;
+    let primaryFallbackPath;
+    let primaryFallbackBody;
     await withServer((req, res) => {
       let body = "";
       req.on("data", (chunk) => { body += chunk; });
       req.on("end", () => {
         primaryFallbackAuth = req.headers.authorization;
+        primaryFallbackPath = req.url;
+        primaryFallbackBody = body;
         const payload = JSON.parse(body);
         assert.equal(payload.model, "primary-model", "primary fallback must use the configured primary model");
+        assert.match(payload.messages[0].content, /senior Simplified Chinese reviewer/, "fallback keeps the repair prompt but changes only the route");
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(completion(JSON.stringify({ Ready: "已就绪" }))));
       });
     }, async (port) => {
       process.env.OPENAI_BASE_URL = "http://127.0.0.1:" + port;
-      const out = await requestOnce([["Ready", "Some.lua:10"]], { exact: new Map() }, globalThis.fetch, { model: "primary-model", route: "primary" });
+      const out = await requestOnce([["Ready", "Some.lua:10"]], { exact: new Map() }, globalThis.fetch, { review: true, model: "primary-model", route: "primary" });
       assert.deepEqual(out, { Ready: "已就绪" });
     });
     assert.equal(primaryFallbackAuth, "Bearer test-key", "primary fallback route must ignore REVIEW_API_KEY");
+    assert.equal(primaryFallbackPath, "/chat/completions", "primary fallback must use OPENAI_BASE_URL, never REVIEW_BASE_URL");
+    assert.match(primaryFallbackBody, /"model":"primary-model"/, "primary fallback request must be sent to the primary model");
   } finally {
     if (oldKey === undefined) delete process.env.API_KEY; else process.env.API_KEY = oldKey;
     if (oldBase === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = oldBase;

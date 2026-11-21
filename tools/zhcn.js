@@ -58,10 +58,16 @@ function sameEdgeFormat(srcKey, memKey) {
   return leadSrc === leadMem && trailSrc === trailMem;
 }
 
+function isLockedOverrideValue(key, value) {
+  const overrides = readReviewedOverrides();
+  return Object.prototype.hasOwnProperty.call(overrides, key) && overrides[key] === value;
+}
+
 function validTranslation(key, value) {
   if (typeof value !== "string" || !value.trim() || value.includes("\uFFFD")) return false;
   if (!formatOk(key, value) || !codesOk(key, value)) return false;
   if (!edgeSpacesMatch(key, value)) return false;
+  if (isLockedOverrideValue(key, value)) return true;
   return !englishLeftover(key, value);
 }
 
@@ -161,6 +167,7 @@ function stripCommandsAndCode(value) {
 
 function englishLeftover(key, value) {
   if (!value || !/[A-Za-z]/.test(value)) return false;
+  if (isLockedOverrideValue(key, value)) return false;
   // Exact, non-prose UI samples and numeric marks are not untranslated
   // English. Require the source and value to agree so real words such as
   // "Up" or "Open" never slip through this fast path.
@@ -261,7 +268,11 @@ function report({ missingOnly = false } = {}) {
   const missing = [...cat.keys()].filter((k) => !entries.has(k));
   const stale = [...entries.keys()].filter((k) => !cat.has(k));
   const bad = [...entries].filter(([k, v]) => !v.trim() || v.includes("\uFFFD") || !formatOk(k, v) || !codesOk(k, v));
-  const untranslatedValues = [...cat.keys()].filter((k) => entries.has(k) && englishLeftover(k, entries.get(k)));
+  const untranslatedValues = [...cat.keys()].filter((k) => {
+    if (!entries.has(k)) return false;
+    const value = entries.get(k);
+    return !isLockedOverrideValue(k, value) && englishLeftover(k, value);
+  });
   const english = untranslatedValues;
   const terminology = terminologyViolations(entries);
 
@@ -795,7 +806,9 @@ function buildSystemPrompt(glossary, opts = {}) {
 
 async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
   const reviewKey = envTrim("REVIEW_API_KEY");
-  const useReviewEndpoint = opts.review === true && !!reviewKey && opts.route !== "primary";
+  const model = opts.model || (opts.review === true ? reviewModel() : requestModel());
+  const forcedPrimary = opts.review !== true || opts.route === "primary" || model === requestModel();
+  const useReviewEndpoint = opts.review === true && !!reviewKey && opts.route !== "primary" && !forcedPrimary;
   const key = useReviewEndpoint
     ? reviewKey
     : (envTrim("API_KEY") || envTrim("OPENAI_API_KEY"));
@@ -803,7 +816,6 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
   const base = (useReviewEndpoint
     ? (envTrim("REVIEW_BASE_URL") || envTrim("OPENAI_BASE_URL") || "https://ai.levis0792.cn:18787/v1")
     : (envTrim("OPENAI_BASE_URL") || "https://ai.levis0792.cn:18787/v1")).replace(/\/$/, "");
-  const model = opts.model || (opts.review ? reviewModel() : requestModel());
   const context = relatedMemory(memory, batch);
   const glossary = readGlossary();
   const system = buildSystemPrompt(glossary, opts);
@@ -867,7 +879,7 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
     }
     if (!codesOk(k, v)) throw Object.assign(new Error("Color/texture code mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
     if (!edgeSpacesMatch(k, v)) throw Object.assign(new Error("Leading/trailing space mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
-    if (englishLeftover(k, v)) throw Object.assign(new Error("AI left the string in English: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
+    if (!isLockedOverrideValue(k, v) && englishLeftover(k, v)) throw Object.assign(new Error("AI left the string in English: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
     out[k] = v;
   }
   return out;
