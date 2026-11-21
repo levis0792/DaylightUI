@@ -618,19 +618,24 @@ function retryable(error) {
   return error && (error.retryable === true || error.timeout === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
 }
 
+function envTrim(name) {
+  const value = process.env[name];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function requestModel() {
-  return process.env.OPENAI_MODEL || "deepseek-v4.1-flash";
+  return envTrim("OPENAI_MODEL") || "deepseek-v4.1-flash";
 }
 
 function reviewModels() {
   const configured = [
-    process.env.ZHCN_REVIEW_MODEL || "deepseek-v4.1-flash",
-    process.env.ZHCN_REVIEW_FALLBACK_MODEL || "deepseek-v4.1-flash",
-    process.env.ZHCN_REVIEW_LAST_MODEL || "deepseek-v4.1-flash",
+    envTrim("ZHCN_REVIEW_MODEL") || "deepseek-v4.1-flash",
+    envTrim("ZHCN_REVIEW_FALLBACK_MODEL") || "deepseek-v4.1-flash",
+    envTrim("ZHCN_REVIEW_LAST_MODEL") || "deepseek-v4.1-flash",
   ];
   // With a separate review endpoint the final safety net must still be
   // the primary DeepSeek model, which requestOnce routes to the main API.
-  if (process.env.REVIEW_API_KEY) configured.push(requestModel());
+  if (envTrim("REVIEW_API_KEY")) configured.push(requestModel());
   return [...new Set(configured.filter(Boolean))];
 }
 
@@ -789,14 +794,15 @@ function buildSystemPrompt(glossary, opts = {}) {
 }
 
 async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
-  const useReviewEndpoint = opts.review === true && !!process.env.REVIEW_API_KEY && opts.route !== "primary";
+  const reviewKey = envTrim("REVIEW_API_KEY");
+  const useReviewEndpoint = opts.review === true && !!reviewKey && opts.route !== "primary";
   const key = useReviewEndpoint
-    ? process.env.REVIEW_API_KEY
-    : (process.env.API_KEY || process.env.OPENAI_API_KEY);
+    ? reviewKey
+    : (envTrim("API_KEY") || envTrim("OPENAI_API_KEY"));
   if (!key) throw new Error("Repository secret API_KEY is not set");
   const base = (useReviewEndpoint
-    ? (process.env.REVIEW_BASE_URL || process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1")
-    : (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1")).replace(/\/$/, "");
+    ? (envTrim("REVIEW_BASE_URL") || envTrim("OPENAI_BASE_URL") || "https://ai.levis0792.cn:18787/v1")
+    : (envTrim("OPENAI_BASE_URL") || "https://ai.levis0792.cn:18787/v1")).replace(/\/$/, "");
   const model = opts.model || (opts.review ? reviewModel() : requestModel());
   const context = relatedMemory(memory, batch);
   const glossary = readGlossary();
@@ -945,8 +951,8 @@ function orderRemainingForContext(keys, cat) {
 
 async function translate(opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
-  const reviewKeyEnabled = !!process.env.REVIEW_API_KEY;
-  const reviewBaseEnabled = !!process.env.REVIEW_BASE_URL;
+  const reviewKeyEnabled = !!envTrim("REVIEW_API_KEY");
+  const reviewBaseEnabled = !!envTrim("REVIEW_BASE_URL");
   console.log(
     "AI config: primary model=" + requestModel() +
     ", review models=" + reviewModels().join(",") +
@@ -996,7 +1002,7 @@ async function translate(opts = {}) {
       const retryRows = batch.filter(([key]) => !(key in recovered));
       let repaired = {};
       if (retryRows.length) {
-        const useReviewRepair = !!process.env.REVIEW_API_KEY;
+        const useReviewRepair = !!envTrim("REVIEW_API_KEY");
         const repairModels = useReviewRepair ? reviewModels() : [requestModel()];
         let repairLastError;
         for (let modelIndex = 0; modelIndex < repairModels.length; modelIndex++) {
@@ -1085,7 +1091,7 @@ async function translate(opts = {}) {
       let previousReviewError;
       for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
         const model = models[modelIndex];
-        const primaryFallback = !!process.env.REVIEW_API_KEY && model === requestModel();
+        const primaryFallback = !!envTrim("REVIEW_API_KEY") && model === requestModel();
         if (primaryFallback && previousReviewError && modelIndex > 0) {
           console.log("Review fallback to primary model " + model + " after review model failure: " + (previousReviewError.message || previousReviewError));
         }
@@ -1152,9 +1158,9 @@ function writeConsensus(data) {
 }
 
 async function judgeCandidates(judge, candidates, keys, fetchImpl = globalThis.fetch) {
-  const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
+  const key = envTrim("API_KEY") || envTrim("OPENAI_API_KEY");
   if (!key) throw new Error("Repository secret API_KEY is not set");
-  const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
+  const base = (envTrim("OPENAI_BASE_URL") || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
   const glossary = readGlossary();
   const prompt = [
     {
