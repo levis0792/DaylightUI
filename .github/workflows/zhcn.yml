@@ -138,6 +138,9 @@ jobs:
               exit 1
             }
           done
+          # Unit tests assert default behavior; isolate them from repository vars/secrets.
+          unset ZHCN_REVIEW_MODEL ZHCN_REVIEW_FALLBACK_MODEL ZHCN_REVIEW_LAST_MODEL
+          unset REVIEW_BASE_URL REVIEW_API_KEY
           node tests/test_zhcn_tool.js
           node tests/test_pr_summary.js
 

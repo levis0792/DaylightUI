@@ -650,11 +650,13 @@ function reviewModels() {
     envTrim("ZHCN_REVIEW_FALLBACK_MODEL") || "deepseek-v4.1-flash",
     envTrim("ZHCN_REVIEW_LAST_MODEL") || "deepseek-v4.1-flash",
   ];
-  if (!envTrim("REVIEW_API_KEY")) return [...new Set(configured.filter(Boolean))];
-  // Keep every review-stage slot and append a distinct route for the final
-  // primary fallback. Even when the model name is the same, the last entry
-  // is marked route=primary by the caller and uses the main API credentials.
-  return [...configured.filter(Boolean), requestModel()];
+  const review = [...new Set(configured.filter(Boolean))];
+  if (!envTrim("REVIEW_API_KEY")) return review;
+  // Keep distinct model names, but reserve the final slot for the primary API
+  // fallback even when it uses the same model name as a review stage. The
+  // caller recognizes that last slot by index, so no marker is needed here.
+  const primaryModel = requestModel();
+  return [...review.filter((model) => model !== primaryModel), primaryModel];
 }
 
 function reviewModel() {
