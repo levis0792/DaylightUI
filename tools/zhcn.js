@@ -629,6 +629,12 @@ function retryable(error) {
   return error && (error.retryable === true || error.timeout === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
 }
 
+function shouldSwitchModelImmediately(error) {
+  if (!error) return false;
+  const message = String(error.message || error);
+  return error.status === 404 || (error.status === 429 && /limit\s*:\s*0/i.test(message));
+}
+
 function envTrim(name) {
   const value = process.env[name];
   return typeof value === "string" ? value.trim() : "";
@@ -644,10 +650,11 @@ function reviewModels() {
     envTrim("ZHCN_REVIEW_FALLBACK_MODEL") || "deepseek-v4.1-flash",
     envTrim("ZHCN_REVIEW_LAST_MODEL") || "deepseek-v4.1-flash",
   ];
-  // With a separate review endpoint the final safety net must still be
-  // the primary DeepSeek model, which requestOnce routes to the main API.
-  if (envTrim("REVIEW_API_KEY")) configured.push(requestModel());
-  return [...new Set(configured.filter(Boolean))];
+  if (!envTrim("REVIEW_API_KEY")) return [...new Set(configured.filter(Boolean))];
+  // Keep every review-stage slot and append a distinct route for the final
+  // primary fallback. Even when the model name is the same, the last entry
+  // is marked route=primary by the caller and uses the main API credentials.
+  return [...configured.filter(Boolean), requestModel()];
 }
 
 function reviewModel() {
@@ -807,8 +814,7 @@ function buildSystemPrompt(glossary, opts = {}) {
 async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
   const reviewKey = envTrim("REVIEW_API_KEY");
   const model = opts.model || (opts.review === true ? reviewModel() : requestModel());
-  const forcedPrimary = opts.review !== true || opts.route === "primary" || model === requestModel();
-  const useReviewEndpoint = opts.review === true && !!reviewKey && opts.route !== "primary" && !forcedPrimary;
+  const useReviewEndpoint = opts.review === true && !!reviewKey && opts.route !== "primary";
   const key = useReviewEndpoint
     ? reviewKey
     : (envTrim("API_KEY") || envTrim("OPENAI_API_KEY"));
@@ -899,20 +905,35 @@ async function requestBatch(batch, memory, opts = {}) {
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const tries = opts.retries || integerEnv("AI_RETRIES", 3, 1);
   const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const logLevel = opts.logLevel || "error";
+  const annotate = opts.annotateErrors !== false && logLevel === "error";
+  const logAttempt = (message) => {
+    if (logLevel === "silent") return;
+    if (logLevel === "warning") console.log("Warning: " + message);
+    else {
+      console.error(message);
+      if (annotate) console.log("::error::" + message);
+    }
+  };
   let last;
   for (let attempt = 1; attempt <= tries; attempt++) {
     try {
-      return await requestOnce(batch, memory, fetchImpl, { review: opts.review === true, model: opts.model, feedback: opts.feedback });
+      return await requestOnce(batch, memory, fetchImpl, {
+        review: opts.review === true,
+        route: opts.route,
+        model: opts.model,
+        feedback: opts.feedback,
+      });
     } catch (e) {
       last = e;
       if (e.outputError) break;
+      const switchNow = shouldSwitchModelImmediately(e);
       const canRetry = retryable(e);
       const message = "AI batch attempt " + attempt + "/" + tries + " failed: " + (e.message || e);
-      console.error(message);
-      console.log("::error::" + message);
-      if (!canRetry || attempt === tries) break;
+      logAttempt(switchNow ? message + "; switching model immediately" : message);
+      if (switchNow || !canRetry || attempt === tries) break;
       const delay = Math.min(30000, integerEnv("AI_RETRY_BASE_MS", 1500, 0) * (2 ** (attempt - 1)));
-      console.error("Retrying in " + delay + "ms");
+      if (logLevel === "error") console.error("Retrying in " + delay + "ms");
       await wait(delay);
     }
   }
@@ -1019,7 +1040,7 @@ async function translate(opts = {}) {
         let repairLastError;
         for (let modelIndex = 0; modelIndex < repairModels.length; modelIndex++) {
           const model = repairModels[modelIndex];
-          const primaryFallback = useReviewRepair && model === requestModel();
+          const primaryFallback = useReviewRepair && modelIndex === repairModels.length - 1 && model === requestModel();
           if (primaryFallback && repairLastError && modelIndex > 0) {
             console.log("AI repair fallback to primary model " + model + " after review model failure: " + (repairLastError.message || repairLastError));
           }
@@ -1031,8 +1052,10 @@ async function translate(opts = {}) {
                 fetchImpl,
                 feedback: String(e.message || e),
                 review: useReviewRepair,
-                route: primaryFallback ? "primary" : undefined,
+                route: primaryFallback ? "primary" : (useReviewRepair ? "review" : "primary"),
                 model,
+                logLevel: modelIndex < repairModels.length - 1 ? "warning" : "silent",
+                annotateErrors: false,
               },
             );
             repairLastError = undefined;
@@ -1041,10 +1064,10 @@ async function translate(opts = {}) {
             break;
           } catch (repairError) {
             repairLastError = repairError;
-            if (repairError.deferred === true || retryable(repairError)) {
-              console.error(`AI repair pass deferred: ${repairError.message || repairError}`);
-            } else {
-              console.error(`AI repair pass failed: ${repairError.message || repairError}`);
+            if (modelIndex === repairModels.length - 1) {
+              const message = `AI repair pass failed after all fallback models: ${repairError.message || repairError}`;
+              console.error(message);
+              console.log("::error::" + message);
             }
           }
         }
@@ -1103,7 +1126,7 @@ async function translate(opts = {}) {
       let previousReviewError;
       for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
         const model = models[modelIndex];
-        const primaryFallback = !!envTrim("REVIEW_API_KEY") && model === requestModel();
+        const primaryFallback = !!envTrim("REVIEW_API_KEY") && modelIndex === models.length - 1 && model === requestModel();
         if (primaryFallback && previousReviewError && modelIndex > 0) {
           console.log("Review fallback to primary model " + model + " after review model failure: " + (previousReviewError.message || previousReviewError));
         }
@@ -1111,15 +1134,21 @@ async function translate(opts = {}) {
           reviewed = await requestBatch(rows, reviewMemory, {
             fetchImpl,
             review: true,
-            route: primaryFallback ? "primary" : undefined,
+            route: primaryFallback ? "primary" : "review",
             model,
+            logLevel: modelIndex < models.length - 1 ? "warning" : "silent",
+            annotateErrors: false,
           });
           previousReviewError = undefined;
           break;
         } catch (e) {
           lastError = e;
           previousReviewError = e;
-          console.error("Review model " + model + " failed for batch " + (i / reviewBatchSize + 1) + ": " + (e.message || e));
+          if (modelIndex === models.length - 1) {
+            const message = "Review failed after all fallback models for batch " + (i / reviewBatchSize + 1) + ": " + (e.message || e);
+            console.error(message);
+            console.log("::error::" + message);
+          }
         }
       }
       if (reviewed) Object.assign(result, reviewed);
@@ -1342,4 +1371,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, orderRemainingForContext, specifiers };
+module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, orderRemainingForContext, specifiers };

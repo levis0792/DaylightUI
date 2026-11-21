@@ -136,7 +136,7 @@ async function main() {
   const generated = readTranslations(generatedTable);
   assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
 
-  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, englishLeftover, validTranslation } = require(toolPath);
+  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, englishLeftover, validTranslation, shouldSwitchModelImmediately } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), true, 'short UI labels are high risk');
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
@@ -178,6 +178,9 @@ async function main() {
   process.env.ZHCN_REVIEW_LAST_MODEL = 'gemini-review-last';
   process.env.REVIEW_API_KEY = 'review-key';
   assert.deepEqual(reviewModels(), ['gemini-review', 'gemini-review-fallback', 'gemini-review-last', 'primary-model'], 'a separate review endpoint ends with the primary model fallback');
+  assert.equal(shouldSwitchModelImmediately({ status: 404, message: 'models/deepseek-v4.1-flash is not found' }), true, '404 switches model immediately');
+  assert.equal(shouldSwitchModelImmediately({ status: 429, message: 'AI request failed (429): rate limit: 0' }), true, 'free-tier zero quota switches model immediately');
+  assert.equal(shouldSwitchModelImmediately({ status: 503, message: 'temporary outage' }), false, 'temporary outages still use normal retry');
   if (oldReviewKey === undefined) delete process.env.REVIEW_API_KEY; else process.env.REVIEW_API_KEY = oldReviewKey;
   if (oldReviewBase === undefined) delete process.env.REVIEW_BASE_URL; else process.env.REVIEW_BASE_URL = oldReviewBase;
   if (oldModelForRouting === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModelForRouting;
@@ -605,6 +608,22 @@ async function main() {
       await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, { retries: 1, wait: async () => {}, review: true, model: "review-model" }), /AI request failed \(503\)/);
     });
     assert.equal(failedReviewAuth, "Bearer review-key", "review retries must still use the independent review key");
+
+    let fastSwitchCalls = 0;
+    const fastSwitchWaits = [];
+    await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
+      retries: 3,
+      wait: async (ms) => { fastSwitchWaits.push(ms); },
+      review: true,
+      model: "review-model",
+      logLevel: "silent",
+      fetchImpl: async () => {
+        fastSwitchCalls += 1;
+        return fakeResponse(404, JSON.stringify({ error: { message: "models/review-model is not found" } }));
+      },
+    }), /AI request failed \(404\)/);
+    assert.equal(fastSwitchCalls, 1, "404 fails fast without three in-place retries");
+    assert.deepEqual(fastSwitchWaits, [], "404 does not wait before switching model");
 
     let primaryFallbackAuth;
     let primaryFallbackPath;
