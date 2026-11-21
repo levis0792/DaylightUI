@@ -269,6 +269,13 @@ async function main() {
   assert.equal(englishLeftover("Open", "Open 商店"), true, "mixed English UI action words must be caught");
   assert.equal(englishLeftover("Open", "打开商店"), false);
   assert.equal(englishLeftover("Aa", "Aa"), false, "font preview label stays in English");
+  assert.equal(englishLeftover("Bb", "Bb"), false, "font preview sample stays in English");
+  assert.equal(englishLeftover("RGB", "RGB"), false, "technical abbreviation stays in English");
+  assert.equal(englishLeftover("16:9", "16:9"), false, "aspect ratio stays unchanged");
+  assert.equal(englishLeftover("12pt", "12pt"), false, "numeric unit stays unchanged");
+  assert.equal(englishLeftover("Up", "Up"), true, "real English UI word is still caught");
+  assert.equal(englishLeftover("Open", "Open"), true, "real English UI word is still caught");
+  assert.equal(englishLeftover("Save", "Save"), true, "real English UI word is still caught");
   assert.equal(englishLeftover("test off", "/dui buffs test off 停止"), false, "command arguments are not UI text");
   assert.equal(englishLeftover("skins profile off", "skins profile 已关闭"), false, "addon command is not UI text");
   assert.equal(englishLeftover("Daylight UI: Bags", "Daylight UI: 背包"), false, "brand prefix stays English");

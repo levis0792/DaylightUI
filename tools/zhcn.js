@@ -84,6 +84,7 @@ const ALLOWED_ENGLISH = new Set([
   "Daylight UI", "Daylight", "TW", "CN", "US", "EU", "CDM",
   // Client terms and units that are correct and clearer in English.
   "PTR", "Beta", "WoW", "XP", "HUD", "ms", "Alt", "Ctrl", "Shift", "Esc", "Delete", "DELETE",
+  "FPS", "RGB", "RGBA", "HEX", "URL", "API", "LUA", "XML", "CPU", "GPU", "KB", "MB", "GB", "px", "pt", "dpi", "IDs", "v2", "v3",
   // AddOn and font names stay as published so players can find them.
   "Ace3", "Attune", "Auctionator", "Baganator", "Bagnon", "BuffLedger", "Deadly Boss Mods", "Dewdrop", "OPie",
   "Plater", "Platynator", "PrettyTooltip", "Questie", "Raider.IO", "RestedXP Guides", "Threat Plates", "TSM",
@@ -91,6 +92,7 @@ const ALLOWED_ENGLISH = new Set([
   "Fira Sans", "Lato", "PT Sans Narrow", "Poppins", "Russo One",
   // Font preview label shown by the picker; keep the rendered sample.
   "Aa",
+  "Bb",
   "DaylightUI", "DaylightUI Discord",
   // Style and addon names users see in the UI, plus the donation page.
   "Jiberish", "Fabled", "Icons", "JiberishUI", "Calm", "Punchy", "Classic",
@@ -159,6 +161,14 @@ function stripCommandsAndCode(value) {
 
 function englishLeftover(key, value) {
   if (!value || !/[A-Za-z]/.test(value)) return false;
+  // Exact, non-prose UI samples and numeric marks are not untranslated
+  // English. Require the source and value to agree so real words such as
+  // "Up" or "Open" never slip through this fast path.
+  const raw = String(value).trim();
+  const original = String(key).trim();
+  if (raw === original && (/^([A-Za-z])\1$/.test(raw)
+    || /^\d+(?:\.\d+)?(?:px|pt|ms|fps|kb|mb|gb|x|%)$/i.test(raw)
+    || /^\d+\s*:\s*\d+$/.test(raw))) return false;
   // Placeholder labels such as "G%d" and "%s x%d" have no prose. English
   // letters inside a printf specifier are not an untranslated sentence.
   if (/^[%A-Za-z0-9_+./ ()-]*$/.test(String(key)) && !String(key).replace(/%%|%(?:[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g, "").trim().match(/[A-Za-z]{2,}/)) return false;
