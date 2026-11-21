@@ -627,8 +627,10 @@ function reviewModels() {
     process.env.ZHCN_REVIEW_MODEL || "deepseek-v4.1-flash",
     process.env.ZHCN_REVIEW_FALLBACK_MODEL || "deepseek-v4.1-flash",
     process.env.ZHCN_REVIEW_LAST_MODEL || "deepseek-v4.1-flash",
-    requestModel(),
   ];
+  // With a separate review endpoint the final safety net must still be
+  // the primary DeepSeek model, which requestOnce routes to the main API.
+  if (process.env.REVIEW_API_KEY) configured.push(requestModel());
   return [...new Set(configured.filter(Boolean))];
 }
 
@@ -768,9 +770,14 @@ function buildSystemPrompt(glossary, opts = {}) {
 }
 
 async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {}) {
-  const key = process.env.API_KEY || process.env.OPENAI_API_KEY;
+  const useReviewEndpoint = opts.review === true && !!process.env.REVIEW_API_KEY;
+  const key = useReviewEndpoint
+    ? process.env.REVIEW_API_KEY
+    : (process.env.API_KEY || process.env.OPENAI_API_KEY);
   if (!key) throw new Error("Repository secret API_KEY is not set");
-  const base = (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1").replace(/\/$/, "");
+  const base = (useReviewEndpoint
+    ? (process.env.REVIEW_BASE_URL || process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1")
+    : (process.env.OPENAI_BASE_URL || "https://ai.levis0792.cn:18787/v1")).replace(/\/$/, "");
   const model = opts.model || (opts.review ? reviewModel() : requestModel());
   const context = relatedMemory(memory, batch);
   const glossary = readGlossary();

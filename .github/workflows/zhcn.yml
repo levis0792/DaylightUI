@@ -65,10 +65,12 @@ jobs:
       ZHCN_STATE_BRANCH: automation/zhcn-state
       API_KEY: ${{ secrets.API_KEY || secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://ai.levis0792.cn:18787/v1' }}
-      OPENAI_MODEL: deepseek-v4.1-flash
-      ZHCN_REVIEW_MODEL: deepseek-v4.1-flash
-      ZHCN_REVIEW_FALLBACK_MODEL: deepseek-v4.1-flash
-      ZHCN_REVIEW_LAST_MODEL: deepseek-v4.1-flash
+      REVIEW_API_KEY: ${{ secrets.REVIEW_API_KEY }}
+      REVIEW_BASE_URL: ${{ vars.REVIEW_BASE_URL }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-v4.1-flash' }}
+      ZHCN_REVIEW_MODEL: ${{ vars.ZHCN_REVIEW_MODEL || 'deepseek-v4.1-flash' }}
+      ZHCN_REVIEW_FALLBACK_MODEL: ${{ vars.ZHCN_REVIEW_FALLBACK_MODEL || 'deepseek-v4.1-flash' }}
+      ZHCN_REVIEW_LAST_MODEL: ${{ vars.ZHCN_REVIEW_LAST_MODEL || 'deepseek-v4.1-flash' }}
       ZHCN_BATCH_SIZE: ${{ vars.ZHCN_BATCH_SIZE || '12' }}
       ZHCN_CONTEXT_LINES: ${{ vars.ZHCN_CONTEXT_LINES || '6' }}
       ZHCN_REVIEW: 'true'
@@ -129,9 +131,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Model names are repository variables: keep them non-empty, but allow Gemini review models.
           for name in OPENAI_MODEL ZHCN_REVIEW_MODEL ZHCN_REVIEW_FALLBACK_MODEL ZHCN_REVIEW_LAST_MODEL ZHCN_CONSENSUS_MODELS ZHCN_JUDGE_MODEL; do
-            test "${!name}" = 'deepseek-v4.1-flash' || {
-              echo "::error::${name} must stay deepseek-v4.1-flash"
+            test -n "${!name}" || {
+              echo "::error::${name} must not be empty"
               exit 1
             }
           done
@@ -371,7 +374,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          API_KEY=test-key ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tests/test_zhcn_tool.js"
+          API_KEY=test-key REVIEW_API_KEY= ZHCN_KEYS_FILE="${RUNNER_TEMP}/zhcn-keys.txt" node "${RUNNER_TEMP}/zhcn-tools/tests/test_zhcn_tool.js"
 
       - name: Upload consensus checkpoint
         if: always() && steps.changed.outputs.needed == 'true'

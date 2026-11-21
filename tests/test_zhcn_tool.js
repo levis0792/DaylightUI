@@ -170,6 +170,16 @@ async function main() {
   assert.equal(models[0], reviewModel());
   assert.deepEqual(models, ['deepseek-v4.1-flash']);
   assert.ok(models.includes('deepseek-v4.1-flash'));
+  const oldReviewKey = process.env.REVIEW_API_KEY;
+  const oldReviewBase = process.env.REVIEW_BASE_URL;
+  process.env.OPENAI_MODEL = 'primary-model';
+  process.env.ZHCN_REVIEW_MODEL = 'gemini-review';
+  process.env.ZHCN_REVIEW_FALLBACK_MODEL = 'gemini-review-fallback';
+  process.env.ZHCN_REVIEW_LAST_MODEL = 'gemini-review-last';
+  process.env.REVIEW_API_KEY = 'review-key';
+  assert.deepEqual(reviewModels(), ['gemini-review', 'gemini-review-fallback', 'gemini-review-last', 'primary-model'], 'a separate review endpoint ends with the primary model fallback');
+  if (oldReviewKey === undefined) delete process.env.REVIEW_API_KEY; else process.env.REVIEW_API_KEY = oldReviewKey;
+  if (oldReviewBase === undefined) delete process.env.REVIEW_BASE_URL; else process.env.REVIEW_BASE_URL = oldReviewBase;
   if (oldModelForRouting === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModelForRouting;
   if (oldReview === undefined) delete process.env.ZHCN_REVIEW_MODEL; else process.env.ZHCN_REVIEW_MODEL = oldReview;
   if (oldFallback === undefined) delete process.env.ZHCN_REVIEW_FALLBACK_MODEL; else process.env.ZHCN_REVIEW_FALLBACK_MODEL = oldFallback;
@@ -393,8 +403,12 @@ async function main() {
   const oldKey = process.env.API_KEY;
   const oldBase = process.env.OPENAI_BASE_URL;
   const oldModelForRequest = process.env.OPENAI_MODEL;
+  const oldReviewKeyForRequest = process.env.REVIEW_API_KEY;
+  const oldReviewBaseForRequest = process.env.REVIEW_BASE_URL;
   process.env.API_KEY = "test-key";
   process.env.OPENAI_MODEL = "test-model";
+  process.env.REVIEW_API_KEY = "review-key";
+  process.env.REVIEW_BASE_URL = "http://127.0.0.1:9/review-v1";
 
   try {
     await withServer((req, res) => {
@@ -549,10 +563,29 @@ async function main() {
       fetchImpl: async () => { calls += 1; return fakeResponse(200, completion(JSON.stringify({ Ready: String.fromCharCode(0xFFFD) }))); },
     }), /replacement character/);
     assert.equal(calls, 1, "a replacement character never reaches the locale");
+
+    await withServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        assert.equal(req.headers.authorization, "Bearer review-key");
+        const payload = JSON.parse(body);
+        assert.equal(payload.model, "review-model");
+        assert.match(payload.messages[0].content, /senior Simplified Chinese reviewer/);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(completion(JSON.stringify({ Ready: "已就绪" }))));
+      });
+    }, async (port) => {
+      process.env.REVIEW_BASE_URL = "http://127.0.0.1:" + port;
+      const out = await requestOnce([["Ready", "Some.lua:10", [], "就绪"]], { exact: new Map() }, globalThis.fetch, { review: true, model: "review-model" });
+      assert.deepEqual(out, { Ready: "已就绪" });
+    });
   } finally {
     if (oldKey === undefined) delete process.env.API_KEY; else process.env.API_KEY = oldKey;
     if (oldBase === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = oldBase;
     if (oldModelForRequest === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModelForRequest;
+    if (oldReviewKeyForRequest === undefined) delete process.env.REVIEW_API_KEY; else process.env.REVIEW_API_KEY = oldReviewKeyForRequest;
+    if (oldReviewBaseForRequest === undefined) delete process.env.REVIEW_BASE_URL; else process.env.REVIEW_BASE_URL = oldReviewBaseForRequest;
   }
 
   console.log("zhCN tool tests: glossary path, request body, retry and failure handling passed");
