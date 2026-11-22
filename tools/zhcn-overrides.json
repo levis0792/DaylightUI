@@ -195,5 +195,14 @@
   "A whole look at once. Daylight leans the numbers along the UI's slant and lights up crits. Calm is small and slow. Punchy is big and flung out both ways. Classic curves like the game's own. Changing a row below makes it Custom.": "一次套用整套外观。Daylight 会沿界面斜角显示数字并高亮爆击。“平静”小而缓慢，“有力”较大并向两侧飞出，“经典”则像游戏原版一样弯曲。更改下方任意选项后会变为“自定义”。",
   "Powershifting: the game takes a moment to confirm a new form, and shows your caster bar until it does. Put /click DaylightUICat (or DaylightUIBear, DaylightUIMoonkin) at the top of your shift macro and this bar swaps the moment you press it.": "重变身（Powershifting）：游戏需要一点时间确认新形态，在确认前会继续显示你的施法者动作条。将 /click DaylightUICat（或 DaylightUIBear、DaylightUIMoonkin）放在变形宏开头，按下时动作条就会立即切换。",
   "Profile": "配置",
-  "Outline": "轮廓线"
+  "Outline": "轮廓线",
+  "Channel ticks": "引导跳数刻度",
+  "Longest first": "最长优先",
+  "Buff order": "增益排序",
+  "Click: pick a set": "点击：选择装备方案",
+  "Click: pick a set (after combat)": "点击：选择装备方案（战斗后）",
+  "No set": "无装备方案",
+  "Set": "装备方案",
+  "How much mana you have, on the bar.": "在计量条上显示当前法力值。",
+  "Shares %s of %s parts. Whoever imports it keeps their own for the rest.": "共享 %s 个，共 %s 个部件。导入者其余部件保留自己的设置。"
 }
