@@ -79,5 +79,6 @@
   "Makes about %s a craft, so these are for one.": "每次制作约产出 %s，因此以上为单次制作所需材料。",
   "How each hand's bar is filled: one color each, the Daylight gradient (the logo's blue to orange), a two-color gradient per hand (set on the Gradients page), or a gradient in colors you pick. A queued attack always keeps its own color.": "主副手计时条的填充方式：各自单色、Daylight 渐变（标志的蓝到橙色）、主副手各自的双色渐变（在“渐变”页面设置），或自选颜色渐变。排队中的攻击始终保持其自身颜色。",
   "Adds up to %.0f to your %s spells' damage.": "最多提高%.0f点%s法术伤害。",
-  "Atkinson Hyperlegible": "Atkinson Hyperlegible"
+  "Atkinson Hyperlegible": "Atkinson Hyperlegible",
+  "Inter": "Inter"
 }

@@ -412,6 +412,8 @@ async function main() {
 
   assert.equal(englishLeftover("Atkinson Hyperlegible", "Atkinson Hyperlegible"), false, "locked override English values are allowed");
   assert.equal(validTranslation("Atkinson Hyperlegible", "Atkinson Hyperlegible"), true, "locked override values stay valid");
+  assert.equal(englishLeftover("Inter", "Inter"), false, "locked font name stays in English");
+  assert.equal(validTranslation("Inter", "Inter"), true, "locked font name stays valid");
   assert.equal(englishLeftover("Open", "Open"), true, "ordinary English UI words remain blocked");
 
   const placeholderRepairPrompt = buildSystemPrompt(readGlossary(), {
