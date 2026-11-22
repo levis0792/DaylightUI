@@ -117,6 +117,7 @@ const ALLOWED_ENGLISH = new Set([
   "EllesmereUI", "DaylightMogul", "SkillUp", "SkillUp Forever",
   // Real addon names that are allowed to appear untranslated in a Chinese sentence.
   "Clique", "Bartender", "Blizzard", "ElvUI", "WeakAuras", "Details", "OmniCC", "Masque", "GatherMate2", "HandyNotes",
+  "Does It Die", "Does It Die's",
   // Keyboard labels are shown in uppercase by the game.
   "ALT", "CTRL", "SHIFT", "shop",
 ]);
@@ -134,7 +135,7 @@ const UI_ACTION_WORDS = new Set([
   "copy", "paste", "search", "select", "clear", "next", "previous", "back",
   "yes", "no", "on", "off", "default", "advanced", "general", "profile",
   "profiles", "import", "export", "update", "install", "ready", "warning",
-  "error", "settings", "setting",
+  "error", "settings", "setting", "shelf",
 ]);
 
 // Short ASCII bits that legitimately sit inside a Chinese sentence:
@@ -165,6 +166,54 @@ function stripCommandsAndCode(value) {
     .trim();
 }
 
+// Ordinary UI labels that can look Title Case but are not addon names. They
+// must never unlock by the proper-name heuristic below.
+const NON_PROPER_UI_WORDS = new Set([
+  "open", "save", "use", "with", "the", "shelf", "groups", "buff", "debuff",
+  "order", "settings", "setting", "profile", "profiles", "general", "advanced", "custom",
+]);
+
+function addonNamePhrasesFromSource(key, value) {
+  if (!hasHan(value)) return [];
+  const source = String(key);
+  const translated = String(value);
+  const phrases = new Set();
+  const patterns = [
+    /\b((?:[A-Z][A-Za-z0-9.]+)(?:\s+[A-Z][A-Za-z0-9.]+)+)\s+addon\b/g,
+    /\b((?:[A-Z][A-Za-z0-9.]+)(?:\s+[A-Z][A-Za-z0-9.]+)+)(?:(?:'s|’s)(?:\s+[A-Za-z][A-Za-z0-9.-]*)?)?\b/g,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source)) !== null) {
+      let phrase = String(match[1] || "").trim();
+      let parts = phrase.split(/\s+/).filter(Boolean);
+      if (parts.length < 2) continue;
+      while (parts.length > 2 && NON_PROPER_UI_WORDS.has(parts[0].toLowerCase())) {
+        parts = parts.slice(1);
+      }
+      phrase = parts.join(" ");
+      if (parts.length < 2) continue;
+      if (parts.slice(0, -1).some((word) => NON_PROPER_UI_WORDS.has(word.toLowerCase()))) continue;
+      const variants = phrase.split(/\s+/).length >= 3
+        ? [phrase, phrase + "'s", phrase + "’s"]
+        : [phrase, phrase + "'s", phrase + "’s", translated];
+      const present = variants.filter((variant) => variant && translated.includes(variant));
+      if (!present.length) continue;
+      for (const variant of present) phrases.add(variant);
+    }
+  }
+  return [...phrases].sort((a, b) => b.length - a.length);
+}
+
+function maskAllowedAddonNames(text, phrases) {
+  let out = String(text);
+  for (const phrase of phrases) {
+    const pattern = new RegExp(escapeRegExp(phrase) + "(?:'s|’s)?(?![A-Za-z])", "g");
+    out = out.replace(pattern, "ZZADDONZZ");
+  }
+  return out;
+}
+
 function englishLeftover(key, value) {
   if (!value || !/[A-Za-z]/.test(value)) return false;
   if (isLockedOverrideValue(key, value)) return false;
@@ -179,7 +228,8 @@ function englishLeftover(key, value) {
   // Placeholder labels such as "G%d" and "%s x%d" have no prose. English
   // letters inside a printf specifier are not an untranslated sentence.
   if (/^[%A-Za-z0-9_+./ ()-]*$/.test(String(key)) && !String(key).replace(/%%|%(?:[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g, "").trim().match(/[A-Za-z]{2,}/)) return false;
-  const stripped = stripCommandsAndCode(value);
+  let stripped = stripCommandsAndCode(value);
+  stripped = maskAllowedAddonNames(stripped, addonNamePhrasesFromSource(key, value));
   if (!stripped) return false;
   const words = stripped.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
   if (!words.length) return false;
@@ -191,6 +241,24 @@ function englishLeftover(key, value) {
   if (ALLOWED_ENGLISH.has(String(value).trim())) return false;
   if (String(key).startsWith("Daylight UI: ") && String(value).startsWith("Daylight UI")) return false;
   if (words.every((w) => ALLOWED_ENGLISH.has(w))) return false;
+  const allowedAddonPhrases = addonNamePhrasesFromSource(key, value);
+  const exactAllowedAddonName = allowedAddonPhrases.some((phrase) =>
+    stripped.trim() === phrase || stripped.trim() === phrase + "'s" || stripped.trim() === phrase + "’s"
+  );
+  if (exactAllowedAddonName) return false;
+  if (allowedAddonPhrases.length) {
+    const maskedValue = maskAllowedAddonNames(value, allowedAddonPhrases);
+    const residual = stripCommandsAndCode(maskedValue);
+    const residualWords = residual.replace(/ZZADDONZZ/g, "").split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
+    const residualProse = residualWords.filter((w) =>
+      !hasHan(w) &&
+      !ALLOWED_ENGLISH.has(w) &&
+      !MIXED_ASCII_WORDS.has(w.toLowerCase()) &&
+      !UI_ACTION_WORDS.has(w.toLowerCase()) &&
+      !TECHNICAL_ENUM_WORDS.has(w.toLowerCase())
+    );
+    if (!residualProse.length) return false;
+  }
   // Proper names, slash commands and addon commands intentionally stay as written.
   if (String(key).startsWith("/") || String(value).startsWith("/")) return false;
   if (/^Daylight UI\s*:/.test(String(value))) return false;

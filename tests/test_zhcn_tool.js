@@ -354,6 +354,14 @@ async function main() {
   assert.equal(englishLeftover("Copy", "选中文字后按Ctrl+C复制。"), false, "Ctrl+C is not English");
   assert.equal(englishLeftover("Support", "在Ko-fi上支持DaylightUI"), false, "donation platform stays English");
   assert.equal(englishLeftover("Clique is on", "Clique 已启用，因此由 Clique 处理点击施法。Clique 继续生效。"), false, "repeated addon names are not an English sentence");
+  const doesItDieShort = "使用 Does It Die's 数字";
+  const doesItDieLong = "安装 Does It Die 插件后，它会统计你的持续伤害剩余伤害，用于此处和目标框体上的阴影与骷髅标记。";
+  assert.equal(englishLeftover("Use Does It Die's numbers", doesItDieShort), false, "possessive addon name may stay inside a translated sentence");
+  assert.equal(validTranslation("Use Does It Die's numbers", doesItDieShort), true, "possessive addon name translation stays valid");
+  assert.equal(englishLeftover("With the Does It Die addon installed, it counts your DoTs' damage left for the shade and the skull, here and on the target frame.", doesItDieLong), false, "addon phrase before 'addon' may stay inside a translated sentence");
+  assert.equal(validTranslation("With the Does It Die addon installed, it counts your DoTs' damage left for the shade and the skull, here and on the target frame.", doesItDieLong), true, "addon phrase translation stays valid");
+  assert.equal(englishLeftover("Use Does It Die's numbers", "Use Does It Die's numbers"), true, "an untranslated sentence with an addon name is still blocked");
+  assert.equal(englishLeftover("Shelf", "Shelf 视图"), true, "ordinary title-case UI words are still blocked");
   assert.equal(englishLeftover("Kinds", "类型：gear weapon armor"), true, "ordinary leaked words still fail");
   assert.equal(englishLeftover("logo-title.png", "logo-title.png"), false, "texture filenames stay unchanged");
   assert.equal(englishLeftover("Search", "Search"), true, "a cached English key is still untranslated");
