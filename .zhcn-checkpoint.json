@@ -1,0 +1,24 @@
+{
+  "sha": "5777c1eaff3aab707d87e14ec61bee5d12a8d0e8",
+  "translations": {
+    "Brought the picked parts into %s, its frames fitted from a %s screen to your %s one.": "已将所选部分导入 %s，其框体已从 %s 屏幕适配到你的 %s 屏幕。",
+    "Brought the picked parts into %s.": "已将所选部件带入 %s。",
+    "Couldn't bring in its Edit Mode layout: %s.": "无法导入其编辑模式布局：%s。",
+    "Into %s": "放入 %s",
+    "ItemTree's advice": "ItemTree 的建议",
+    "ItemTree's lines under a heading of their own, with what it says to do (keep, sell, open) as colored tags.": "ItemTree 的行显示在各自的标题下，其建议操作（保留、出售、打开）以彩色标签呈现。",
+    "Junk, but ItemTree says to keep it, so it isn't sold": "垃圾，但 ItemTree 要求保留，因此不会出售",
+    "Keep": "保留",
+    "Never sell what ItemTree keeps": "绝不出售 ItemTree 保留的物品",
+    "Open it": "打开",
+    "Paste a DaylightUI profile (Ctrl+V). Make it a new profile, or bring parts into the one in use.": "粘贴一个DaylightUI配置（Ctrl+V）。将其创建为新配置，或将部分内容导入当前使用的配置。",
+    "Selling junk, by hand or when a vendor opens, leaves alone anything ItemTree says to keep, even gray items and items you moved to Junk.": "出售垃圾时，无论是手动出售还是打开商人时自动出售，都不会动 ItemTree 标记为保留的任何物品，包括灰色物品和你自己移到“垃圾”中的物品。",
+    "Show ItemTree's marks": "显示 ItemTree 的标记",
+    "Start its quest": "开始其任务",
+    "Takes %s of %s parts into %s. The rest stay as they are.": "将 %s 个部件导入到 %s，共 %s 个部件。其余部件保持不变。",
+    "Takes all %s parts into %s.": "将全部 %s 个部件采用到 %s 中。",
+    "Use it": "使用",
+    "Worthless": "无价值",
+    "its Edit Mode layout can't be read": "无法读取其编辑模式布局"
+  }
+}
