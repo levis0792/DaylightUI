@@ -192,6 +192,8 @@ async function main() {
   assert.deepEqual(reviewModels(), ['primary-model'], 'same model on different routes is represented once as the primary fallback');
   assert.equal(shouldSwitchModelImmediately({ status: 404, message: 'models/deepseek-v4.1-flash is not found' }), true, '404 switches model immediately');
   assert.equal(shouldSwitchModelImmediately({ status: 429, message: 'AI request failed (429): rate limit: 0' }), true, 'free-tier zero quota switches model immediately');
+  assert.equal(shouldSwitchModelImmediately({ status: 429, message: 'AI request failed (429): per day limit exceeded' }), true, 'daily quota switches model immediately');
+  assert.equal(shouldSwitchModelImmediately({ status: 429, message: 'AI request failed (429): generate_content_free_tier_requests exhausted' }), true, 'free-tier request quota switches model immediately');
   assert.equal(shouldSwitchModelImmediately({ status: 503, message: 'temporary outage' }), false, 'temporary outages still use normal retry');
   if (oldReviewKey === undefined) delete process.env.REVIEW_API_KEY; else process.env.REVIEW_API_KEY = oldReviewKey;
   if (oldReviewBase === undefined) delete process.env.REVIEW_BASE_URL; else process.env.REVIEW_BASE_URL = oldReviewBase;
@@ -361,6 +363,13 @@ async function main() {
   assert.equal(englishLeftover("With the Does It Die addon installed, it counts your DoTs' damage left for the shade and the skull, here and on the target frame.", doesItDieLong), false, "addon phrase before 'addon' may stay inside a translated sentence");
   assert.equal(validTranslation("With the Does It Die addon installed, it counts your DoTs' damage left for the shade and the skull, here and on the target frame.", doesItDieLong), true, "addon phrase translation stays valid");
   assert.equal(englishLeftover("Use Does It Die's numbers", "Use Does It Die's numbers"), true, "an untranslated sentence with an addon name is still blocked");
+  const itemTreeEn = "A small dot on the top right corner from ItemTree: green to keep, gold to sell, the accent to open or use now. Search keep, sell, usenow or needed to find them.";
+  const itemTreeZh = "来自 ItemTree 的右上角小圆点：绿色表示保留，金色表示出售，强调色表示立即打开或使用。搜索 keep、sell、usenow 或 needed 即可找到它们。";
+  assert.equal(englishLeftover(itemTreeEn, itemTreeZh), false, "camelCase addon name and literal search keywords may stay inside a translated sentence");
+  assert.equal(validTranslation(itemTreeEn, itemTreeZh), true, "ItemTree search translation stays valid");
+  assert.equal(englishLeftover("Use DaylightUI", "使用 DaylightUI 插件"), false, "camelCase addon name may stay inside a translated sentence");
+  assert.equal(englishLeftover("Query QuestieDB", "查询 QuestieDB 数据"), false, "camelCase internal-capital addon name may stay inside a translated sentence");
+  assert.equal(englishLeftover(itemTreeEn, itemTreeEn), true, "an untranslated sentence with CamelCase terms is still blocked");
   assert.equal(englishLeftover("Shelf", "Shelf 视图"), true, "ordinary title-case UI words are still blocked");
   assert.equal(englishLeftover("Kinds", "类型：gear weapon armor"), true, "ordinary leaked words still fail");
   assert.equal(englishLeftover("logo-title.png", "logo-title.png"), false, "texture filenames stay unchanged");
@@ -692,6 +701,22 @@ async function main() {
     }), /AI request failed \(404\)/);
     assert.equal(fastSwitchCalls, 1, "404 fails fast without three in-place retries");
     assert.deepEqual(fastSwitchWaits, [], "404 does not wait before switching model");
+
+    let dailyLimitCalls = 0;
+    const dailyLimitWaits = [];
+    await assert.rejects(() => requestBatch([["Ready", "Some.lua:10"]], { exact: new Map() }, {
+      retries: 3,
+      wait: async (ms) => { dailyLimitWaits.push(ms); },
+      review: true,
+      model: "review-model",
+      logLevel: "silent",
+      fetchImpl: async () => {
+        dailyLimitCalls += 1;
+        return fakeResponse(429, JSON.stringify({ error: { message: "per day limit exceeded" } }));
+      },
+    }), /AI request failed \(429\)/);
+    assert.equal(dailyLimitCalls, 1, "daily 429 quota fails fast without three in-place retries");
+    assert.deepEqual(dailyLimitWaits, [], "daily 429 quota does not wait before switching model");
 
     let primaryFallbackAuth;
     let primaryFallbackPath;

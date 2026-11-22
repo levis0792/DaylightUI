@@ -209,9 +209,47 @@ function maskAllowedAddonNames(text, phrases) {
   let out = String(text);
   for (const phrase of phrases) {
     const pattern = new RegExp(escapeRegExp(phrase) + "(?:'s|’s)?(?![A-Za-z])", "g");
-    out = out.replace(pattern, "ZZADDONZZ");
+    out = out.replace(pattern, "ZZKEEPZZ");
   }
   return out;
+}
+
+// CamelCase names such as ItemTree, DaylightUI and QuestieDB are proper nouns.
+// Only mask them when the translated value contains Chinese and the exact
+// spelling also exists in the English source; ordinary labels such as Shelf
+// or Open cannot qualify because they have no internal capital letter.
+function camelCaseProperNamesFromSource(key, value) {
+  if (!hasHan(value)) return [];
+  const translated = String(value);
+  const found = new Set();
+  for (const token of String(key).match(/[A-Za-z][A-Za-z0-9]*/g) || []) {
+    if (!/[A-Z]/.test(token) || !/[a-z]/.test(token)) continue;
+    if (!/\b[A-Z][a-z0-9]*[A-Z]/.test(token)) continue;
+    if (!translated.includes(token)) continue;
+    found.add(token);
+  }
+  return [...found].sort((a, b) => b.length - a.length);
+}
+
+// Search/help prose often lists literal commands the user must type. Keep
+// those lowercase words only when the source introduces a word list with
+// Search/Search for/Type and the translated value preserves each word.
+function searchKeywordTermsFromSource(key, value) {
+  if (!hasHan(value)) return [];
+  const translated = String(value);
+  const source = String(key);
+  const match = source.match(/\b(?:Search|Type)\s+(?:for\s+)?([^.!?]+)(?:[.!?]|$)/i);
+  if (!match) return [];
+  const stopWords = new Set(["to", "find", "them", "for", "the", "and", "in", "on", "a", "an", "is", "are", "it"]);
+  const terms = new Set();
+  for (const piece of match[1].split(/,|\bor\b|、|，|\band\b/i)) {
+    const term = piece.trim().replace(/['"“”‘’]/g, "");
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(term)) continue;
+    if (stopWords.has(term.toLowerCase())) continue;
+    if (!translated.includes(term)) continue;
+    terms.add(term);
+  }
+  return [...terms].sort((a, b) => b.length - a.length);
 }
 
 function englishLeftover(key, value) {
@@ -228,8 +266,12 @@ function englishLeftover(key, value) {
   // Placeholder labels such as "G%d" and "%s x%d" have no prose. English
   // letters inside a printf specifier are not an untranslated sentence.
   if (/^[%A-Za-z0-9_+./ ()-]*$/.test(String(key)) && !String(key).replace(/%%|%(?:[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/g, "").trim().match(/[A-Za-z]{2,}/)) return false;
-  let stripped = stripCommandsAndCode(value);
-  stripped = maskAllowedAddonNames(stripped, addonNamePhrasesFromSource(key, value));
+  const allowedProperTerms = [...new Set([
+    ...addonNamePhrasesFromSource(key, value),
+    ...camelCaseProperNamesFromSource(key, value),
+    ...searchKeywordTermsFromSource(key, value),
+  ])].sort((a, b) => b.length - a.length);
+  let stripped = stripCommandsAndCode(maskAllowedAddonNames(value, allowedProperTerms)).replace(/ZZKEEPZZ/g, "");
   if (!stripped) return false;
   const words = stripped.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
   if (!words.length) return false;
@@ -241,15 +283,9 @@ function englishLeftover(key, value) {
   if (ALLOWED_ENGLISH.has(String(value).trim())) return false;
   if (String(key).startsWith("Daylight UI: ") && String(value).startsWith("Daylight UI")) return false;
   if (words.every((w) => ALLOWED_ENGLISH.has(w))) return false;
-  const allowedAddonPhrases = addonNamePhrasesFromSource(key, value);
-  const exactAllowedAddonName = allowedAddonPhrases.some((phrase) =>
-    stripped.trim() === phrase || stripped.trim() === phrase + "'s" || stripped.trim() === phrase + "’s"
-  );
-  if (exactAllowedAddonName) return false;
-  if (allowedAddonPhrases.length) {
-    const maskedValue = maskAllowedAddonNames(value, allowedAddonPhrases);
-    const residual = stripCommandsAndCode(maskedValue);
-    const residualWords = residual.replace(/ZZADDONZZ/g, "").split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
+  if (allowedProperTerms.length) {
+    const residual = stripCommandsAndCode(maskAllowedAddonNames(value, allowedProperTerms));
+    const residualWords = residual.replace(/ZZKEEPZZ/g, "").split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
     const residualProse = residualWords.filter((w) =>
       !hasHan(w) &&
       !ALLOWED_ENGLISH.has(w) &&
@@ -259,6 +295,7 @@ function englishLeftover(key, value) {
     );
     if (!residualProse.length) return false;
   }
+
   // Proper names, slash commands and addon commands intentionally stay as written.
   if (String(key).startsWith("/") || String(value).startsWith("/")) return false;
   if (/^Daylight UI\s*:/.test(String(value))) return false;
@@ -696,7 +733,11 @@ function retryable(error) {
 function shouldSwitchModelImmediately(error) {
   if (!error) return false;
   const message = String(error.message || error);
-  return error.status === 404 || (error.status === 429 && /limit\s*:\s*0/i.test(message));
+  if (error.status === 404) return true;
+  if (error.status === 429) {
+    return /limit\s*:\s*0|per day|generate_content_free_tier_requests/i.test(message);
+  }
+  return false;
 }
 
 function envTrim(name) {
