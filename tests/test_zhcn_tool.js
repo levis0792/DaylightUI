@@ -37,6 +37,10 @@ async function withServer(handler, fn) {
   }
 }
 
+function makeLongFixture(text, file, line) {
+  const sentence = " This long description explains the option in detail, so it should stay available as read-only review context for short labels and symmetric wording in the same group.";
+  return text + sentence.repeat(Math.max(1, Math.ceil((80 - text.length) / sentence.length) + 1)).slice(0, Math.max(80, 100 - text.length));
+}
 async function main() {
   assert.equal(spawnSync(process.execPath, ["--check", toolPath], { encoding: "utf8" }).status, 0,
     "tools/zhcn.js must parse");
@@ -136,7 +140,7 @@ async function main() {
   const generated = readTranslations(generatedTable);
   assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
 
-  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, englishLeftover, validTranslation, shouldSwitchModelImmediately } = require(toolPath);
+  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, buildReviewReferenceContext, englishLeftover, validTranslation, shouldSwitchModelImmediately } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), true, 'short UI labels are high risk');
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
@@ -200,6 +204,42 @@ async function main() {
   assert.equal(typeof translateConsensus, "function", "consensus pass is available");
   const { relatedMemory } = require(toolPath);
   assert.deepEqual(relatedMemory({ exact: new Map([["Bar animation", "状态条动画"], ["Unrelated", "无关"]]) }, [["Bar styles", "x"]]), [["Bar animation", "状态条动画"]]);
+  const sameFileLong = makeLongFixture("Click: pick a set (after combat) uses 装备方案 after combat", "Bags/Options.lua", 12);
+  const keywordLong = makeLongFixture("Buff order controls the ordering of buff rows", "Buffs/Options.lua", 20);
+  const unrelatedLong = makeLongFixture("This unrelated long description belongs to another options page", "Other/Options.lua", 40);
+  const reviewCat = new Map([
+    ["Set", { refs: ["Bags/Options.lua:10"] }],
+    ["Click: pick a set", { refs: ["Bags/Options.lua:11"] }],
+    ["Buff order", { refs: ["Buffs/Options.lua:20"] }],
+    [sameFileLong, { refs: ["Bags/Options.lua:12"] }],
+    [keywordLong, { refs: ["Other/Options.lua:30"] }],
+    [unrelatedLong, { refs: ["Other/Options.lua:40"] }],
+    ["Short ignored reference", { refs: ["Bags/Options.lua:13"] }],
+  ]);
+  const referenceTranslations = new Map([
+    ["Set", "装备方案"],
+    [sameFileLong, "战斗结束后才打开装备方案选择器，因此短标签应统一使用“装备方案”。"],
+    [keywordLong, "增益排序控制同一组内增益行的顺序。"],
+    [unrelatedLong, "这是另一个选项页面的无关长句说明。"],
+    ["Short ignored reference", "短句"],
+  ]);
+  const reviewRefs = buildReviewReferenceContext(reviewCat, ["Set", "Click: pick a set", "Buff order"], referenceTranslations);
+  assert.deepEqual(reviewRefs.map((item) => item.en), [sameFileLong, keywordLong], "same-file and shared-keyword long rows become read-only review references");
+  assert.equal(reviewRefs.every((item) => item.zhCN && item.source_location), true, "review references carry zhCN and source location");
+  const cappedRefs = buildReviewReferenceContext(reviewCat, ["Set", "Click: pick a set", "Buff order"], referenceTranslations, { maxItems: 1, maxChars: 1 });
+  assert.deepEqual(cappedRefs, [], "zero character budget excludes all review references");
+  const oneRef = buildReviewReferenceContext(reviewCat, ["Set", "Click: pick a set", "Buff order"], referenceTranslations, { maxItems: 1, maxChars: 20000 });
+  assert.equal(oneRef.length, 1, "review references respect the item cap");
+  const shortRefs = buildReviewReferenceContext(reviewCat, ["Set", "Click: pick a set", "Buff order"], referenceTranslations, { maxItems: 20, maxChars: 40 });
+  assert.equal(shortRefs.length, 0, "review references respect the character cap");
+  assert.ok(sameFileLong.length + referenceTranslations.get(sameFileLong).length > 40, "character-cap fixture is meaningful");
+
+  const { readGlossary: readGlossaryForPrompt } = require(toolPath);
+  assert.match(buildSystemPrompt(readGlossaryForPrompt(), { review: true }), /READ-ONLY CONTEXT/, "review prompt marks long references read-only");
+  assert.match(buildSystemPrompt(readGlossaryForPrompt(), { review: true }), /short option labels/, "review prompt checks short label consistency");
+  assert.match(buildSystemPrompt(readGlossaryForPrompt(), { review: true }), /symmetric options/, "review prompt checks symmetric option wording");
+  assert.match(buildSystemPrompt(readGlossaryForPrompt(), { review: true }), /ambiguous English/, "review prompt checks ambiguous English using long explanations");
+
   const { requestOnce, requestBatch, readGlossary, retryable, enforceReviewedOverrides } = require(toolPath);
 
   const glossary = readGlossary();
@@ -587,12 +627,14 @@ async function main() {
     }), /replacement character/);
     assert.equal(calls, 1, "a replacement character never reaches the locale");
 
+    let reviewRequestBody;
     await withServer((req, res) => {
       let body = "";
       req.on("data", (chunk) => { body += chunk; });
       req.on("end", () => {
         assert.equal(req.headers.authorization, "Bearer review-key");
-        const payload = JSON.parse(body);
+        reviewRequestBody = JSON.parse(body);
+        const payload = reviewRequestBody;
         assert.equal(payload.model, "review-model");
         assert.match(payload.messages[0].content, /senior Simplified Chinese reviewer/);
         res.writeHead(200, { "content-type": "application/json" });
@@ -600,9 +642,17 @@ async function main() {
       });
     }, async (port) => {
       process.env.REVIEW_BASE_URL = "http://127.0.0.1:" + port;
-      const out = await requestOnce([["Ready", "Some.lua:10", [], "就绪"]], { exact: new Map() }, globalThis.fetch, { review: true, model: "review-model" });
+      const out = await requestOnce([["Ready", "Some.lua:10", [], "就绪"]], { exact: new Map() }, globalThis.fetch, {
+        review: true,
+        model: "review-model",
+        reviewReferences: [{ en: sameFileLong, zhCN: "长句参考译文", source_location: "Bags/Options.lua:12" }],
+      });
       assert.deepEqual(out, { Ready: "已就绪" });
     });
+    const reviewUser = JSON.parse(reviewRequestBody.messages[1].content);
+    assert.match(reviewUser.long_description_reference_note, /只读参考，禁止输出到返回的 JSON 中/, "review request marks long references read-only");
+    assert.deepEqual(reviewUser.long_description_reference, [{ en: sameFileLong, zhCN: "长句参考译文", source_location: "Bags/Options.lua:12" }], "review request carries bounded long-description context");
+    assert.deepEqual(reviewUser.strings_to_translate.map((row) => row.original_english), ["Ready"], "review target keys are unchanged");
     let failedReviewAuth;
     await withServer((req, res) => {
       let body = "";

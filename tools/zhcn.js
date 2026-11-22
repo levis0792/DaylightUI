@@ -711,6 +711,68 @@ function nearbyContext(cat, key, refs) {
   return rows.slice(0, window).map((row) => row[2]);
 }
 
+function buildReviewReferenceContext(cat, keys, translations, opts = {}) {
+  const rawMaxItems = opts.maxItems == null ? process.env.ZHCN_REVIEW_CONTEXT_MAX_ITEMS : opts.maxItems;
+  const rawMaxChars = opts.maxChars == null ? process.env.ZHCN_REVIEW_CONTEXT_MAX_CHARS : opts.maxChars;
+  const maxItems = rawMaxItems == null || rawMaxItems === "" ? 20 : Number(rawMaxItems);
+  const maxChars = rawMaxChars == null || rawMaxChars === "" ? 2500 : Number(rawMaxChars);
+  if (!Number.isInteger(maxItems) || maxItems < 0 || !Number.isInteger(maxChars) || maxChars < 0) {
+    throw new Error("Review reference limits must be non-negative integers");
+  }
+  if (!maxItems || !maxChars) return [];
+
+  const targetKeys = new Set((keys || []).map((key) => String(key)));
+  const sourceFiles = new Set();
+  const keywords = new Set();
+  for (const key of targetKeys) {
+    const refs = (cat.get(key) && cat.get(key).refs) || [];
+    for (const ref of refs) {
+      const file = String(ref).replace(/:\d+$/, "");
+      if (file) sourceFiles.add(file);
+    }
+    for (const word of String(key).toLowerCase().match(/[a-z]{3,}/g) || []) keywords.add(word);
+  }
+  if (!sourceFiles.size && !keywords.size) return [];
+
+  const pairs = translations instanceof Map ? translations : new Map(Object.entries(translations || {}));
+  const scored = [];
+  for (const [key, value] of pairs) {
+    if (targetKeys.has(key)) continue;
+    if (typeof value !== "string" || !value.trim() || !/[\u3400-\u9fff]/.test(value)) continue;
+    const item = cat.get(key);
+    if (!item) continue;
+    const english = String(key);
+    const clauses = (english.match(/[.;:!?]|\b(?:and|or|but|if|when|while|unless|before|after)\b/gi) || []).length;
+    if (english.length < 80 && !(english.length >= 50 && clauses >= 2)) continue;
+    const refs = Array.isArray(item.refs) ? item.refs : [];
+    const sourceLocation = String(refs[0] || "");
+    const file = sourceLocation.replace(/:\d+$/, "");
+    const lower = english.toLowerCase();
+    let shared = 0;
+    for (const word of keywords) if (lower.includes(word)) shared += 1;
+    const sameFile = !!file && sourceFiles.has(file);
+    if (!sameFile && !shared) continue;
+    scored.push({
+      en: english,
+      zhCN: value,
+      source_location: sourceLocation,
+      score: (sameFile ? 5 : 0) + shared,
+    });
+  }
+  scored.sort((a, b) => b.score - a.score || b.en.length - a.en.length || a.en.localeCompare(b.en));
+
+  const out = [];
+  let used = 0;
+  for (const item of scored) {
+    if (out.length >= maxItems) break;
+    const cost = item.en.length + item.zhCN.length;
+    if (used + cost > maxChars) continue;
+    out.push({ en: item.en, zhCN: item.zhCN, source_location: item.source_location });
+    used += cost;
+  }
+  return out;
+}
+
 function readCheckpoint() {
   try {
     const data = JSON.parse(fs.readFileSync(checkpointPath, "utf8"));
@@ -779,6 +841,9 @@ function buildSystemPrompt(glossary, opts = {}) {
     baseRules.unshift(
       "You are the senior Simplified Chinese reviewer for DaylightUI. Each item includes original_english, source_location, nearby_ui_text, and draft_zhCN. Review draft_zhCN carefully: fix any out-of-context mistranslations, swapped placeholder semantics, glossary inconsistencies, or missing leading/trailing spaces; keep accurate drafts intact."
     );
+    baseRules.push(
+      "long_description_reference is READ-ONLY CONTEXT (只读参考，禁止输出到返回的 JSON 中). Use it only to review strings_to_translate: (a) short option labels and Chinese names quoted in long descriptions must agree (e.g. 最长优先, 装备方案); (b) symmetric options in one group must use consistent wording (e.g. Buff order / Debuff order both use 排序); (c) use long explanations to resolve ambiguous English in this UI (Channel ticks = cast-bar tick marks, Groups = bag grouping, not party grouping). Return ONLY keys from strings_to_translate; never output long_description_reference keys."
+    );
   }
 
   if (opts.feedback) {
@@ -830,7 +895,16 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
     }
     return row;
   });
-  const user = JSON.stringify({ approved_translation_memory: context, strings_to_translate: requested }, null, 2);
+  const userData = { approved_translation_memory: context, strings_to_translate: requested };
+  if (opts.review && Array.isArray(opts.reviewReferences) && opts.reviewReferences.length) {
+    userData.long_description_reference_note = "只读参考，禁止输出到返回的 JSON 中；仅用于核对短选项名、对称术语和多义词语境。";
+    userData.long_description_reference = opts.reviewReferences.map((item) => ({
+      en: String(item.en || ""),
+      zhCN: String(item.zhCN || ""),
+      source_location: String(item.source_location || ""),
+    }));
+  }
+  const user = JSON.stringify(userData, null, 2);
   const payload = {
     model,
     temperature: requestTemperature(),
@@ -921,6 +995,7 @@ async function requestBatch(batch, memory, opts = {}) {
         route: opts.route,
         model: opts.model,
         feedback: opts.feedback,
+        reviewReferences: opts.reviewReferences,
       });
     } catch (e) {
       last = e;
@@ -1109,6 +1184,7 @@ async function translate(opts = {}) {
   const reviewFailures = [];
   if (risky.length && process.env.ZHCN_REVIEW !== "false") {
     const reviewMemory = translationMemory(new Map([...entries, ...Object.entries(result)]));
+    const reviewTranslations = new Map([...entries, ...Object.entries(result)]);
     const models = reviewModels();
     const reviewBatchSize = integerEnv("ZHCN_REVIEW_BATCH_SIZE", 6, 1);
     for (let i = 0; i < risky.length; i += reviewBatchSize) {
@@ -1119,6 +1195,7 @@ async function translate(opts = {}) {
         nearbyContext(cat, k, cat.get(k).refs),
         result[k],
       ]);
+      const reviewReferences = buildReviewReferenceContext(cat, keys, reviewTranslations);
       let reviewed;
       let lastError;
       let previousReviewError;
@@ -1134,6 +1211,7 @@ async function translate(opts = {}) {
             review: true,
             route: primaryFallback ? "primary" : "review",
             model,
+            reviewReferences,
             logLevel: modelIndex < models.length - 1 ? "warning" : "silent",
             annotateErrors: false,
           });
@@ -1369,4 +1447,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, orderRemainingForContext, specifiers };
+module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, buildReviewReferenceContext, orderRemainingForContext, specifiers };
