@@ -208,5 +208,30 @@
   "third color": "第三颜色",
   "fourth color": "第四颜色",
   "fifth color": "第五颜色",
-  "custom gradient": "自定义渐变"
+  "custom gradient": "自定义渐变",
+  "Threat meter": "仇恨统计",
+  "Threat Meter": "仇恨统计",
+  "Threat colors": "仇恨颜色",
+  "Shelf": "货架",
+  "Crit": [
+    "爆击",
+    "暴击"
+  ],
+  "Parry": "招架",
+  "Dodge": "躲闪",
+  "Block": "格挡",
+  "Dispel": "驱散",
+  "Interrupt": "打断",
+  "Taunt": "嘲讽",
+  "Vendor": "商人",
+  "Reagent": "材料",
+  "Durability": "耐久度",
+  "Soulbound": "灵魂绑定",
+  "Hearthstone": "炉石",
+  "Keyring": "钥匙链",
+  "Quiver": "箭袋",
+  "Unit frame": "单位框体",
+  "Profile": "配置文件",
+  "Anchor": "锚点",
+  "Outline": "描边"
 }
