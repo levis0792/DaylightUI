@@ -1,6 +1,17 @@
 {
-  "sha": "fe9a383c6e7318ea3aec37645d1dbdea66501cb0",
+  "sha": "f9a7efdefb04368cb0801d9ae8872add02fc2a2a",
   "translations": {
-    "Neon": "霓虹"
+    "A bright spark on the line once the enemy is in range.": "敌人进入范围后，线上会亮起一个明亮的火花。",
+    "A round minimap stands on its own ring. The damage meter slides out from behind it in a box of its own, and the data texts sit in a small box under it. Needs Minimap shape set to Round, or Rotate as you turn.": "圆形微缩地图立在自身圆环上。伤害统计从它身后滑出，置于独立框内，数据文字则位于其下方的小框中。需要将微缩地图形状设为圆形，或随转向旋转。",
+    "A soft glow around the whole health bar once the enemy is in range, so it stands out in a crowd.": "敌人进入范围后，整条生命条周围会显示柔和光晕，使其在人群中更醒目。",
+    "Execute range bar texture": "斩杀阶段条材质",
+    "Execute range: glow": "斩杀阶段：光晕",
+    "Execute range: spark": "斩杀阶段：火花",
+    "Faint band brightness": "淡色区域亮度",
+    "Flat: one even color. Fade in: faint at the bar's end, full at the line. Stripes: bold warning stripes. Neon: a glowing tube. Bar texture: any bar texture, picked below.": "平面：单一均匀颜色。淡入：条末端较淡，到线处完全显示。条纹：醒目的警告条纹。霓虹：发光管效果。条材质：在下方选择的任意条材质。",
+    "Frameless round map": "无边框圆形地图",
+    "How bright the band is before the enemy gets in range. Turn it all the way up to see the range clearly all the time.": "敌人进入范围前条带的亮度。调至最大可始终清晰地看到范围。",
+    "Neon": "霓虹",
+    "The bar texture the execute range uses with Bar texture picked above. General uses the bar texture on General > Appearance.": "上方选择“计量条材质”时斩杀阶段所用的计量条材质。“常规”使用“常规 > 外观”中的计量条材质。"
   }
 }
