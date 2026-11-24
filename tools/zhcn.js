@@ -63,11 +63,49 @@ function isLockedOverrideValue(key, value) {
   return Object.prototype.hasOwnProperty.call(overrides, key) && overrides[key] === value;
 }
 
+// Hard errors that can NEVER be soft-allowed under any circumstances:
+// 1. Empty translation or replacement characters
+// 2. Format specifier / placeholder mismatches (count, order, types)
+// 3. Color or texture code mismatches
+// 4. Leading / trailing whitespace mismatches
+// 5. Generic UI action words left untranslated (UI_ACTION_WORDS: Open, Save, etc.)
+// 6. Entire sentence left in English with no Han characters (unless whitelisted)
+function isHardTranslationError(key, value) {
+  if (typeof value !== "string" || !value.trim() || value.includes("\uFFFD")) {
+    return "Empty translation or replacement character";
+  }
+  if (!formatOk(key, value)) {
+    return "Format specifier / placeholder mismatch";
+  }
+  if (!codesOk(key, value)) {
+    return "Color or texture code mismatch";
+  }
+  if (!edgeSpacesMatch(key, value)) {
+    return "Leading/trailing space mismatch";
+  }
+  if (isLockedOverrideValue(key, value)) {
+    return false;
+  }
+  const stripped = stripCommandsAndCode(value);
+  const words = stripped.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
+  for (const w of words) {
+    const lower = w.toLowerCase();
+    if (UI_ACTION_WORDS.has(lower) && !ALLOWED_ENGLISH.has(w)) {
+      return `UI action word left in English: ${w}`;
+    }
+  }
+  if (!hasHan(value) && !ALLOWED_ENGLISH.has(String(value).trim())) {
+    return "Entire sentence left in English without translation";
+  }
+  return false;
+}
+
 function validTranslation(key, value) {
   if (typeof value !== "string" || !value.trim() || value.includes("\uFFFD")) return false;
   if (!formatOk(key, value) || !codesOk(key, value)) return false;
   if (!edgeSpacesMatch(key, value)) return false;
   if (isLockedOverrideValue(key, value)) return true;
+  if (isSoftAllowed(key, value)) return true;
   return !englishLeftover(key, value);
 }
 
@@ -86,6 +124,11 @@ function readLocale() {
 }
 
 const ALLOWED_ENGLISH = new Set([
+  // Native language selector names intentionally stay as written in the player's language picker.
+  "Deutsch", "English", "Français", "Español", "Italiano", "Português",
+  "Português (Brasil)", "Español (México)", "Español (España)",
+  "Polski", "Nederlands", "Svenska", "Türkçe",
+  "Brasil", "México", "España",
   "PvP", "PvE", "RP", "DPS", "HPS", "NPC", "UI", "AFK", "AP", "AOE", "AoE", "GUID", "ID", "PVP", "PVE",
   "Daylight UI", "Daylight", "TW", "CN", "US", "EU", "CDM",
   // Client terms and units that are correct and clearer in English.
@@ -420,7 +463,7 @@ function report({ missingOnly = false } = {}) {
   const untranslatedValues = [...cat.keys()].filter((k) => {
     if (!entries.has(k)) return false;
     const value = entries.get(k);
-    return !isLockedOverrideValue(k, value) && englishLeftover(k, value);
+    return !isLockedOverrideValue(k, value) && !isSoftAllowed(k, value) && englishLeftover(k, value);
   });
   const english = untranslatedValues;
   const terminology = terminologyViolations(entries);
@@ -774,6 +817,36 @@ function retryable(error) {
   return error && (error.retryable === true || error.timeout === true || error.status === 408 || error.status === 409 || error.status === 425 || error.status === 429 || error.status >= 500);
 }
 
+const softAllowedTranslations = new Map();
+
+function isSoftAllowed(key, value) {
+  return softAllowedTranslations.has(key) && softAllowedTranslations.get(key) === value;
+}
+
+function markSoftAllowed(key, value) {
+  softAllowedTranslations.set(key, value);
+}
+
+function clearSoftAllowed() {
+  softAllowedTranslations.clear();
+}
+
+const exhaustedModels = new Set();
+
+function isModelExhausted(model) {
+  return typeof model === "string" && exhaustedModels.has(model);
+}
+
+function markModelExhausted(model) {
+  if (typeof model === "string" && model.trim()) {
+    exhaustedModels.add(model.trim());
+  }
+}
+
+function clearExhaustedModels() {
+  exhaustedModels.clear();
+}
+
 function shouldSwitchModelImmediately(error) {
   if (!error) return false;
   const message = String(error.message || error);
@@ -1110,7 +1183,18 @@ async function requestOnce(batch, memory, fetchImpl = globalThis.fetch, opts = {
     }
     if (!codesOk(k, v)) throw Object.assign(new Error("Color/texture code mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
     if (!edgeSpacesMatch(k, v)) throw Object.assign(new Error("Leading/trailing space mismatch: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
-    if (!isLockedOverrideValue(k, v) && englishLeftover(k, v)) throw Object.assign(new Error("AI left the string in English: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true });
+    if (!isLockedOverrideValue(k, v) && !isSoftAllowed(k, v) && englishLeftover(k, v)) {
+      const hardErr = isHardTranslationError(k, v);
+      if (hardErr) {
+        throw Object.assign(new Error(`AI left the string in English (${hardErr}): ${JSON.stringify(k)} -> ${JSON.stringify(v)}`), { outputError: true, hardError: true });
+      }
+      if (opts.isRepair === true) {
+        markSoftAllowed(k, v);
+        console.log(`Warning: Soft-allowing confirmed English technical/proper literal after repair pass: ${JSON.stringify(k)} -> ${JSON.stringify(v)}`);
+      } else {
+        throw Object.assign(new Error("AI left the string in English: " + JSON.stringify(k) + " -> " + JSON.stringify(v)), { outputError: true, needsRepair: true });
+      }
+    }
     out[k] = v;
   }
   return out;
@@ -1127,6 +1211,13 @@ function integerEnv(name, fallback, minimum) {
 }
 
 async function requestBatch(batch, memory, opts = {}) {
+  const targetModel = opts.model || (opts.review === true ? reviewModel() : requestModel());
+  if (isModelExhausted(targetModel)) {
+    const exhaustedErr = new Error(`Model ${targetModel} is exhausted for this run; skipping`);
+    exhaustedErr.status = 429;
+    exhaustedErr.exhausted = true;
+    throw exhaustedErr;
+  }
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const tries = opts.retries || integerEnv("AI_RETRIES", 3, 1);
   const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -1154,6 +1245,10 @@ async function requestBatch(batch, memory, opts = {}) {
       last = e;
       if (e.outputError) break;
       const switchNow = shouldSwitchModelImmediately(e);
+      if (switchNow) {
+        const usedModel = opts.model || (opts.review === true ? reviewModel() : requestModel());
+        markModelExhausted(usedModel);
+      }
       const canRetry = retryable(e);
       const message = "AI batch attempt " + attempt + "/" + tries + " failed: " + (e.message || e);
       logAttempt(switchNow ? message + "; switching model immediately" : message);
@@ -1266,6 +1361,7 @@ async function translate(opts = {}) {
         let repairLastError;
         for (let modelIndex = 0; modelIndex < repairModels.length; modelIndex++) {
           const model = repairModels[modelIndex];
+          if (isModelExhausted(model)) continue;
           const primaryFallback = useReviewRepair && modelIndex === repairModels.length - 1 && model === requestModel();
           if (primaryFallback && repairLastError && modelIndex > 0) {
             console.log("AI repair fallback to primary model " + model + " after review model failure: " + (repairLastError.message || repairLastError));
@@ -1276,8 +1372,9 @@ async function translate(opts = {}) {
               translationMemory(new Map([...entries, ...Object.entries(result)])),
               {
                 fetchImpl,
-                feedback: String(e.message || e),
+                feedback: "若为漏翻请补译；若确认是专有名词/插件名/字体名/语言原名/代码指令，则保留英文。硬性要求：严禁返回空译文，严禁遗漏或破坏%s等占位符，严禁通用UI动作词如Open/Save原样未翻。原失败详情: " + String(e.message || e),
                 review: useReviewRepair,
+                isRepair: true,
                 route: primaryFallback ? "primary" : (useReviewRepair ? "review" : "primary"),
                 model,
                 logLevel: modelIndex < repairModels.length - 1 ? "warning" : "silent",
@@ -1290,6 +1387,9 @@ async function translate(opts = {}) {
             break;
           } catch (repairError) {
             repairLastError = repairError;
+            if (shouldSwitchModelImmediately(repairError)) {
+              markModelExhausted(model);
+            }
             if (modelIndex === repairModels.length - 1) {
               const message = `AI repair pass failed after all fallback models: ${repairError.message || repairError}`;
               console.error(message);
@@ -1354,6 +1454,7 @@ async function translate(opts = {}) {
       let previousReviewError;
       for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
         const model = models[modelIndex];
+        if (isModelExhausted(model)) continue;
         const primaryFallback = !!envTrim("REVIEW_API_KEY") && modelIndex === models.length - 1 && model === requestModel();
         if (primaryFallback && previousReviewError && modelIndex > 0) {
           console.log("Review fallback to primary model " + model + " after review model failure: " + (previousReviewError.message || previousReviewError));
@@ -1373,6 +1474,9 @@ async function translate(opts = {}) {
         } catch (e) {
           lastError = e;
           previousReviewError = e;
+          if (shouldSwitchModelImmediately(e)) {
+            markModelExhausted(model);
+          }
           if (modelIndex === models.length - 1) {
             const message = "Review failed after all fallback models for batch " + (i / reviewBatchSize + 1) + ": " + (e.message || e);
             console.error(message);
@@ -1600,4 +1704,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, buildReviewReferenceContext, orderRemainingForContext, specifiers };
+module.exports = { isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed, exhaustedModels, isModelExhausted, markModelExhausted, clearExhaustedModels, readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, buildReviewReferenceContext, orderRemainingForContext, specifiers };

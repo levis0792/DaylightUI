@@ -209,5 +209,18 @@
   "Takes all %s parts into %s.": "采用全部 %s 个部件，导入 %s。",
   "Brought the picked parts into %s, its frames fitted from a %s screen to your %s one.": "已将所选部件导入 %s，其框体已从 %s 屏幕适配到你的 %s 屏幕。",
   "Brought the picked parts into %s.": "已将所选部件导入 %s。",
-  "Paste a DaylightUI profile (Ctrl+V). Make it a new profile, or bring parts into the one in use.": "粘贴一个 DaylightUI 配置文件（Ctrl+V）。将其设为新配置文件，或将部件导入当前使用的配置文件。"
+  "Paste a DaylightUI profile (Ctrl+V). Make it a new profile, or bring parts into the one in use.": "粘贴一个 DaylightUI 配置文件（Ctrl+V）。将其设为新配置文件，或将部件导入当前使用的配置文件。",
+  "Deutsch": "Deutsch",
+  "English": "English",
+  "Français": "Français",
+  "Español": "Español",
+  "Italiano": "Italiano",
+  "Português": "Português",
+  "Português (Brasil)": "Português (Brasil)",
+  "Español (México)": "Español (México)",
+  "Español (España)": "Español (España)",
+  "Polski": "Polski",
+  "Nederlands": "Nederlands",
+  "Svenska": "Svenska",
+  "Türkçe": "Türkçe"
 }

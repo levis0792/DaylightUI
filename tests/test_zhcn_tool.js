@@ -140,7 +140,7 @@ async function main() {
   const generated = readTranslations(generatedTable);
   assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
 
-  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, buildReviewReferenceContext, englishLeftover, validTranslation, shouldSwitchModelImmediately } = require(toolPath);
+  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, buildReviewReferenceContext, englishLeftover, validTranslation, shouldSwitchModelImmediately, isModelExhausted, markModelExhausted, clearExhaustedModels, exhaustedModels, isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), true, 'short UI labels are high risk');
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
@@ -195,6 +195,8 @@ async function main() {
   assert.equal(shouldSwitchModelImmediately({ status: 429, message: 'AI request failed (429): per day limit exceeded' }), true, 'daily quota switches model immediately');
   assert.equal(shouldSwitchModelImmediately({ status: 429, message: 'AI request failed (429): generate_content_free_tier_requests exhausted' }), true, 'free-tier request quota switches model immediately');
   assert.equal(shouldSwitchModelImmediately({ status: 503, message: 'temporary outage' }), false, 'temporary outages still use normal retry');
+
+
   if (oldReviewKey === undefined) delete process.env.REVIEW_API_KEY; else process.env.REVIEW_API_KEY = oldReviewKey;
   if (oldReviewBase === undefined) delete process.env.REVIEW_BASE_URL; else process.env.REVIEW_BASE_URL = oldReviewBase;
   if (oldModelForRouting === undefined) delete process.env.OPENAI_MODEL; else process.env.OPENAI_MODEL = oldModelForRouting;
@@ -346,6 +348,14 @@ async function main() {
   const tocSource = 'Its .toc should say "## Category: %s" and "## Group: %s", so it sits under the plugins\' heading in the AddOns list.';
   const tocValid = '它的 .toc 应写有 "## Category: %s" 和 "## Group: %s"，这样它会在插件列表中归入插件分类下。';
   assert.equal(englishLeftover(tocSource, tocValid), false, ".toc technical literal and quoted directives must be allowed");
+
+  // Native language selector names (e.g. Deutsch, Español, Français)
+  assert.equal(englishLeftover("Deutsch", "Deutsch"), false, "Deutsch is allowed as native language label");
+  assert.equal(validTranslation("Deutsch", "Deutsch"), true, "Deutsch translation is valid");
+  for (const lang of ["Français", "Español", "Italiano", "Português", "Português (Brasil)", "Español (México)", "Español (España)", "Polski", "Nederlands", "Svenska", "Türkçe"]) {
+    assert.equal(englishLeftover(lang, lang), false, `${lang} must be allowed as native language label`);
+    assert.equal(validTranslation(lang, lang), true, `${lang} translation must be valid`);
+  }
   assert.equal(validTranslation(tocSource, tocValid), true, ".toc translation must be valid");
   assert.equal(englishLeftover(tocSource, '它的 .toc 应写有 "## Category: %s"，Open 该窗口'), true, "mixed UI action words remain blocked with technical literals");
   assert.equal(englishLeftover(tocSource, tocSource), true, "entire sentence left in English remains blocked");
@@ -710,6 +720,7 @@ async function main() {
     }), /AI request failed \(404\)/);
     assert.equal(fastSwitchCalls, 1, "404 fails fast without three in-place retries");
     assert.deepEqual(fastSwitchWaits, [], "404 does not wait before switching model");
+    clearExhaustedModels();
 
     let dailyLimitCalls = 0;
     const dailyLimitWaits = [];
@@ -726,6 +737,98 @@ async function main() {
     }), /AI request failed \(429\)/);
     assert.equal(dailyLimitCalls, 1, "daily 429 quota fails fast without three in-place retries");
     assert.deepEqual(dailyLimitWaits, [], "daily 429 quota does not wait before switching model");
+
+    // Exhausted models are remembered and skipped in subsequent batches
+    assert.equal(isModelExhausted("review-model"), true, "review-model must be marked exhausted after 429 per day");
+    let batch2Rejected = false;
+    try {
+      await requestBatch([["Ready 2", "Some.lua:11"]], { exact: new Map() }, {
+        retries: 3,
+        wait: async () => {},
+        review: true,
+        model: "review-model",
+        logLevel: "silent",
+        fetchImpl: async () => {
+          dailyLimitCalls += 1;
+          return fakeResponse(200, completion(JSON.stringify({ "Ready 2": "就绪2" })));
+        },
+      });
+    } catch (e) {
+      batch2Rejected = true;
+      assert.ok(e.exhausted, "batch 2 fails fast with exhausted model error");
+    }
+    assert.equal(batch2Rejected, true, "subsequent batch rejected immediately");
+    assert.equal(dailyLimitCalls, 1, "exhausted review-model was NOT called again in subsequent batch");
+    clearExhaustedModels();
+    assert.equal(isModelExhausted("review-model"), false, "clearExhaustedModels resets memory");
+
+    // ------------------------------------------------------------------
+    // Soft-allow fault-tolerant architecture tests
+    // ------------------------------------------------------------------
+    clearSoftAllowed();
+
+    // Hard errors verification: placeholder mismatch, empty, UI_ACTION_WORDS
+    assert.ok(isHardTranslationError("Press %s", "按下"), "missing placeholder is hard error");
+    assert.ok(isHardTranslationError("Empty", ""), "empty string is hard error");
+    assert.ok(isHardTranslationError("Open", "Open"), "bare UI action word is hard error");
+    assert.ok(isHardTranslationError("Open menu", "Open 菜单"), "mixed UI action word is hard error");
+    assert.ok(isHardTranslationError("Save file", "Save 该文件"), "mixed Save is hard error");
+    assert.equal(isHardTranslationError("Deutsch", "Deutsch"), false, "Deutsch has no hard error");
+    assert.equal(isHardTranslationError("Configure special addon feature for your character", "为你的角色配置 special addon feature"), false, "proper noun has no hard error");
+
+    // Hard errors must strictly fail even during repair pass
+    await assert.rejects(async () => {
+      await requestBatch([["Press %s to start", "Test.lua:1"]], { exact: new Map() }, {
+        fetchImpl: async () => fakeResponse(200, completion(JSON.stringify({ "Press %s to start": "点击开始" }))),
+        retries: 1,
+        isRepair: true,
+        logLevel: "silent",
+      });
+    }, /Placeholder mismatch/);
+
+    await assert.rejects(async () => {
+      await requestBatch([["Open the menu", "Test.lua:1"]], { exact: new Map() }, {
+        fetchImpl: async () => fakeResponse(200, completion(JSON.stringify({ "Open the menu": "Open 菜单" }))),
+        retries: 1,
+        isRepair: true,
+        logLevel: "silent",
+      });
+    }, /UI action word left in English/);
+
+    await assert.rejects(async () => {
+      await requestBatch([["Open", "Test.lua:1"]], { exact: new Map() }, {
+        fetchImpl: async () => fakeResponse(200, completion(JSON.stringify({ "Open": "Open" }))),
+        retries: 1,
+        isRepair: true,
+        logLevel: "silent",
+      });
+    }, /Entire sentence left in English|UI action word/);
+
+    // Unknown proper noun: fails on initial pass, soft-allowed on repair pass
+    const mockProperNounFetch = async () => fakeResponse(200, completion(JSON.stringify({
+      "Configure special addon feature for your character": "为你的角色配置 special addon feature"
+    })));
+
+    await assert.rejects(async () => {
+      await requestBatch([["Configure special addon feature for your character", "Options.lua:1"]], { exact: new Map() }, {
+        fetchImpl: mockProperNounFetch,
+        retries: 1,
+        logLevel: "silent",
+      });
+    }, /AI left the string in English/);
+
+    const softResult = await requestBatch([["Configure special addon feature for your character", "Options.lua:1"]], { exact: new Map() }, {
+      fetchImpl: mockProperNounFetch,
+      retries: 1,
+      isRepair: true,
+      logLevel: "silent",
+    });
+    assert.deepEqual(softResult, {
+      "Configure special addon feature for your character": "为你的角色配置 special addon feature"
+    }, "unknown proper noun is soft-allowed after repair pass");
+    assert.equal(isSoftAllowed("Configure special addon feature for your character", "为你的角色配置 special addon feature"), true);
+    assert.equal(validTranslation("Configure special addon feature for your character", "为你的角色配置 special addon feature"), true);
+    clearSoftAllowed();
 
     let primaryFallbackAuth;
     let primaryFallbackPath;
