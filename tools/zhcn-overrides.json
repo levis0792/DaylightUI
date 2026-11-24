@@ -222,5 +222,21 @@
   "Polski": "Polski",
   "Nederlands": "Nederlands",
   "Svenska": "Svenska",
-  "Türkçe": "Türkçe"
+  "Türkçe": "Türkçe",
+  "%s (not here)": "%s（未显示）",
+  "%s isn't here, so this is measured from the middle of the screen. The group follows it again once it's back.": "%s 当前未显示，因此改为从屏幕中央开始测量。它重新显示后，该分组会恢复跟随。",
+  "Measured from %s, at its anchor point (%s). If that frame takes the group past a screen edge, the group stops at the edge and comes back when it can.": "从 %s 的锚点 (%s) 开始测量。如果该框体将分组带出屏幕边缘，分组会停在边缘，并在条件允许时返回。",
+  "Which frame this group follows. It keeps its spot beside that frame as the frame moves, but still shows and fades by its own rules.": "此分组跟随的框体。当该框体移动时，它会保持在该框体旁边的位置，但仍会按自身的规则显示和淡出。",
+  "Hide the fishing bobber's tooltip": "隐藏钓鱼浮标的鼠标提示",
+  "Possess Bar (off)": "控制条（关闭）",
+  "Totem badge border": "图腾徽章边框",
+  "Totem badge shape": "图腾徽章形状",
+  "Legacy micro menu icon color": "传承微型菜单图标颜色",
+  "Controller bars fade": "手柄动作条淡出",
+  "When the game's controller bars fade and how far, with its controller mode on.": "启用手柄模式时，游戏手柄动作条的淡出时机与程度。",
+  "Flat: one even color. Fade in: faint at the bar's end, full at the line. Stripes: bold warning stripes. Neon: a glowing tube. Bar texture: any bar texture, picked below.": "平面：单一均匀颜色。淡入：条末端较淡，到线处完全显示。条纹：醒目的警告条纹。霓虹：发光管效果。计量条材质：在下方选择的任意计量条材质。",
+  "The layer your focus's cast bar draws in. Where two pieces overlap, the higher layer draws on top: Background, Low, Medium, High, then Dialogue. Inside the frame or sliding out under it, it draws with the frame instead. Same as frame keeps it with the frame wherever it stands.": "焦点施法条的绘制层级。两个元素重叠时，层级较高者显示在上方：背景、低、中、高、对话。位于框体内或从框体下方滑出时，随框体一同绘制。“与框体相同”使它无论位于何处都与框体保持一致。",
+  "The layer your target's cast bar draws in. Where two pieces overlap, the higher layer draws on top: Background, Low, Medium, High, then Dialogue. Inside the frame or sliding out under it, it draws with the frame instead. Same as frame keeps it with the frame wherever it stands.": "你的目标施法条使用的层级。两处重叠时，层级更高的在上方绘制：背景、低、中、高，然后是对话。位于框体内或从框体下方滑出时，它会改为随框体绘制。“与框体相同”会使其无论身在何处都随框体一起绘制。",
+  "The thin line under the name, and the light, glow and diamond with it. Same as the name follows the name's color.": "名称下方的细线，以及随附的扫光、光晕和菱形。“与名称相同”会跟随名称的颜色。",
+  "Contested, Sanctuary, Horde or Alliance territory: in the zone's own PvP color, tan, white, or a color you pick.": "争夺中、庇护所、部落或联盟领地：使用地区自身的PvP颜色、棕褐色、白色，或你选择的颜色。"
 }
