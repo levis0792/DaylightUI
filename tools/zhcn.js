@@ -25,7 +25,7 @@ const toolRoot = process.env.ZHCN_TOOL_ROOT ? path.resolve(process.env.ZHCN_TOOL
 const { extract } = require(path.join(toolRoot, "tools", "lib", "catalog"));
 const { decodeShortString, luaQuote } = require(path.join(toolRoot, "tools", "lib", "lua"));
 const { formatOk, specifiers, codesOk } = require(path.join(toolRoot, "tools", "lib", "format"));
-const LOCALE_LINE = /^L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")$/;
+const LOCALE_LINE = /^\s*L\[("(?:\\.|[^"\\])*")\]\s*=\s*("(?:\\.|[^"\\])*")\s*;?\s*$/;
 const checkpointPath = process.env.ZHCN_CHECKPOINT
   ? path.resolve(process.env.ZHCN_CHECKPOINT)
   : path.join(root, ".zhcn-cache", "checkpoint.json");
@@ -612,6 +612,75 @@ function prune() {
   return removed;
 }
 
+function appendAdditionsToLocale(src, additions, marker = "-- More translated lines.") {
+  if (!additions || !additions.length) return src;
+  const isCrlf = src.includes("\r\n");
+  const fileEol = isCrlf ? "\r\n" : "\n";
+  const lines = src.split(/\r?\n/);
+
+  // 1. Detect existing indentation from L[...] lines
+  let indent = "";
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(/^(\s+)L\[/);
+    if (m) {
+      indent = m[1];
+      break;
+    }
+  }
+
+  // 2. Format the lines to insert
+  const formattedAdditions = [];
+  if (marker && !src.includes(marker)) {
+    formattedAdditions.push(indent + marker);
+  }
+  const sorted = [...additions].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  for (const [k, v] of sorted) {
+    formattedAdditions.push(`${indent}L[${luaQuote(k)}] = ${luaQuote(v)}`);
+  }
+
+  // 3. Find the closing boundary line (e.g. "end)", "end", "return")
+  // Scan backwards, skipping blank lines and comments
+  let closingIndex = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].replace(/--.*$/, "").trim();
+    if (!trimmed) continue;
+    if (/^(?:end\s*\)|end|return\b.*)$/.test(trimmed)) {
+      closingIndex = i;
+    }
+    break;
+  }
+
+  if (closingIndex !== -1) {
+    // Insert additions before the closing statement
+    const before = lines.slice(0, closingIndex);
+    const after = lines.slice(closingIndex);
+    while (before.length && before[before.length - 1].trim() === "") {
+      before.pop();
+    }
+    const combined = [
+      ...before,
+      "",
+      ...formattedAdditions,
+      "",
+      ...after,
+    ];
+    let res = combined.join(fileEol);
+    if (!res.endsWith(fileEol)) res += fileEol;
+    return res;
+  } else {
+    // Legacy flat file structure
+    let out = src;
+    if (!out.endsWith("\n") && !out.endsWith("\r\n")) {
+      out += fileEol;
+    }
+    if (marker && !out.includes(marker)) {
+      out += fileEol + marker + fileEol;
+    }
+    out += formattedAdditions.join(fileEol) + fileEol;
+    return out;
+  }
+}
+
 function appendMoreLinesMarker(text) {
   const marker = "-- More translated lines.";
   let out = text.replace(/\n?$/, "\n");
@@ -643,9 +712,7 @@ function applyData(data, label, opts = {}) {
 
   const toAdd = toApply.filter(([k]) => !entries.has(k));
   if (toAdd.length) {
-    out = appendMoreLinesMarker(out);
-    out += toAdd.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-      .map(([k, v]) => `L[${luaQuote(k)}] = ${luaQuote(v)}`).join("\n") + "\n";
+    out = appendAdditionsToLocale(out, toAdd);
   }
 
   fs.writeFileSync(localePath, out, "utf8");
@@ -678,8 +745,7 @@ function baseline(file) {
     console.log("Baseline adds no new entries; the author file is unchanged.");
     return 0;
   }
-  let text = appendMoreLinesMarker(src);
-  text += additions.map(([key, value]) => "L[" + luaQuote(key) + "] = " + luaQuote(value)).join("\n") + "\n";
+  let text = appendAdditionsToLocale(src, additions);
   fs.writeFileSync(localePath, text, "utf8");
   console.log("Baseline appended " + additions.length + " new entries; existing file kept byte-for-byte.");
   return additions.length;
@@ -1678,7 +1744,17 @@ async function rebuildAll(opts = {}) {
   console.log(`Rebuild finished with ${Object.keys(final).length} entries.`);
   enforceReviewedOverrides(final, allowed);
   const ordered = Object.keys(final).sort().map((k) => `L[${luaQuote(k)}] = ${luaQuote(final[k])}`);
-  fs.writeFileSync(localePath, "-- Simplified Chinese (zhCN).\nlocal _, DUI = ...\nif DUI.LOCALE ~= \"zhCN\" then return end\nlocal L = DUI.L\n\n" + ordered.join("\n") + "\n", "utf8");
+  let header = "-- Simplified Chinese (zhCN).\nlocal _, DUI = ...\nif DUI.LOCALE ~= \"zhCN\" then return end\nlocal L = DUI.L\n\n";
+  let footer = "\n";
+  if (fs.existsSync(localePath)) {
+    const existing = fs.readFileSync(localePath, "utf8");
+    if (/DUI\.AddLanguage\s*\(\s*["']zhCN["']\s*,\s*function\s*\(\s*L\s*\)/.test(existing)) {
+      const m = existing.match(/^([\s\S]*?DUI\.AddLanguage\s*\(\s*["']zhCN["']\s*,\s*function\s*\(\s*L\s*\)[\r\n]+)/);
+      header = m ? m[1] : '-- Simplified Chinese (zhCN).\nlocal _, DUI = ...\nDUI.AddLanguage("zhCN", function(L)\n\n';
+      footer = "\nend)\n";
+    }
+  }
+  fs.writeFileSync(localePath, header + ordered.join("\n") + footer, "utf8");
   report();
 }
 
@@ -1705,4 +1781,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed, exhaustedModels, isModelExhausted, markModelExhausted, clearExhaustedModels, readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, buildReviewReferenceContext, orderRemainingForContext, specifiers };
+module.exports = { appendAdditionsToLocale, isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed, exhaustedModels, isModelExhausted, markModelExhausted, clearExhaustedModels, readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, buildReviewReferenceContext, orderRemainingForContext, specifiers };

@@ -140,7 +140,7 @@ async function main() {
   const generated = readTranslations(generatedTable);
   assert.equal(generated.get("It's ready"), "已就绪", "Lua escaped apostrophes are decoded");
 
-  const { highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, buildReviewReferenceContext, englishLeftover, validTranslation, shouldSwitchModelImmediately, isModelExhausted, markModelExhausted, clearExhaustedModels, exhaustedModels, isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed } = require(toolPath);
+  const { appendAdditionsToLocale, highRisk, batchSize, requestModel, reviewModel, reviewModels, terminologyViolations, buildSystemPrompt, buildReviewReferenceContext, englishLeftover, validTranslation, shouldSwitchModelImmediately, isModelExhausted, markModelExhausted, clearExhaustedModels, exhaustedModels, isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed } = require(toolPath);
 
   assert.equal(highRisk('Short label', 'Bags/Options.lua:1'), true, 'short UI labels are high risk');
   assert.equal(highRisk('A sentence with a long explanation, a condition and another condition, so it needs a careful second pass.', 'Bags/Options.lua:1'), true, 'long conditional sentences are high risk');
@@ -828,6 +828,56 @@ async function main() {
     }, "unknown proper noun is soft-allowed after repair pass");
     assert.equal(isSoftAllowed("Configure special addon feature for your character", "为你的角色配置 special addon feature"), true);
     assert.equal(validTranslation("Configure special addon feature for your character", "为你的角色配置 special addon feature"), true);
+
+    // ------------------------------------------------------------------
+    // Modern closure format (DUI.AddLanguage ... end)) insertion test
+    // ------------------------------------------------------------------
+    const modernClosureSample = [
+      '-- Simplified Chinese (zhCN). English text is the key (Locales/Locales.lua).',
+      'local _, DUI = ...',
+      'DUI.AddLanguage("zhCN", function(L)',
+      '',
+      '-- Simplified Chinese localization maintained by Levis; checked against DaylightUI 1.6.7.',
+      'L["First"] = "第一"',
+      'L["Second"] = "第二"',
+      '',
+      'end)',
+      ''
+    ].join("\n");
+
+    const os = require("node:os");
+    const closureTestDir = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-closure-"));
+    fs.mkdirSync(path.join(closureTestDir, "Locales"), { recursive: true });
+    const closureLocaleFile = path.join(closureTestDir, "Locales", "zhCN.lua");
+    fs.writeFileSync(closureLocaleFile, modernClosureSample, "utf8");
+
+    process.env.ZHCN_ROOT = closureTestDir;
+    delete require.cache[require.resolve(toolPath)];
+    const closureTool = require(toolPath);
+
+    closureTool.applyData({
+      "Third": "第三",
+      "Fourth": "第四"
+    }, "test closure additions");
+
+    const modifiedLocale = fs.readFileSync(closureLocaleFile, "utf8");
+    const modLines = modifiedLocale.trim().split(/\r?\n/);
+    const lastLine = modLines[modLines.length - 1].trim();
+    assert.equal(lastLine, "end)", "file must strictly end with closure end)");
+
+    const endIdx = modLines.findIndex((l) => l.trim() === "end)");
+    assert.ok(endIdx > 0, "end) must exist in the file");
+    for (let i = endIdx + 1; i < modLines.length; i++) {
+      assert.equal(modLines[i].includes("L["), false, "no L[...] lines are allowed after end)");
+    }
+    const thirdIdx = modLines.findIndex((l) => l.includes('L["Third"]'));
+    const fourthIdx = modLines.findIndex((l) => l.includes('L["Fourth"]'));
+    assert.ok(thirdIdx !== -1 && thirdIdx < endIdx, "L['Third'] must be inside the closure before end)");
+    assert.ok(fourthIdx !== -1 && fourthIdx < endIdx, "L['Fourth'] must be inside the closure before end)");
+
+    delete process.env.ZHCN_ROOT;
+    fs.rmSync(closureTestDir, { recursive: true, force: true });
+    delete require.cache[require.resolve(toolPath)];
     clearSoftAllowed();
 
     let primaryFallbackAuth;
