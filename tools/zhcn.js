@@ -1240,6 +1240,7 @@ async function requestBatch(batch, memory, opts = {}) {
         model: opts.model,
         feedback: opts.feedback,
         reviewReferences: opts.reviewReferences,
+        isRepair: opts.isRepair === true,
       });
     } catch (e) {
       last = e;
