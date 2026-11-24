@@ -341,6 +341,15 @@ async function main() {
   assert.equal(englishLeftover("test off", "/dui buffs test off 停止"), false, "command arguments are not UI text");
   assert.equal(englishLeftover("skins profile off", "skins profile 已关闭"), false, "addon command is not UI text");
   assert.equal(englishLeftover("Daylight UI: Bags", "Daylight UI: 背包"), false, "brand prefix stays English");
+
+  // Technical literal bypass rules (.toc / .lua files and quoted syntax headers)
+  const tocSource = 'Its .toc should say "## Category: %s" and "## Group: %s", so it sits under the plugins\' heading in the AddOns list.';
+  const tocValid = '它的 .toc 应写有 "## Category: %s" 和 "## Group: %s"，这样它会在插件列表中归入插件分类下。';
+  assert.equal(englishLeftover(tocSource, tocValid), false, ".toc technical literal and quoted directives must be allowed");
+  assert.equal(validTranslation(tocSource, tocValid), true, ".toc translation must be valid");
+  assert.equal(englishLeftover(tocSource, '它的 .toc 应写有 "## Category: %s"，Open 该窗口'), true, "mixed UI action words remain blocked with technical literals");
+  assert.equal(englishLeftover(tocSource, tocSource), true, "entire sentence left in English remains blocked");
+  assert.equal(englishLeftover("Shelf view", "Shelf 视图"), true, "plain English word remains blocked in Chinese prose");
   assert.equal(retryable({ status: 401 }), false);
 
   // Regression: whole English sentences left inside Chinese text.

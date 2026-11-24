@@ -252,6 +252,48 @@ function searchKeywordTermsFromSource(key, value) {
   return [...terms].sort((a, b) => b.length - a.length);
 }
 
+// Technical literals in code/syntax/configuration that must remain unchanged in Chinese text.
+// Only applied when the translated value contains Chinese and the exact tokens originate from English source.
+function technicalLiteralsFromSource(key, value) {
+  if (!hasHan(value)) return [];
+  const source = String(key);
+  const translated = String(value);
+  const found = new Set();
+
+  // 1. File extensions and filename fragments originating from English source (e.g. .toc, .lua, .png)
+  const fileMatches = source.match(/(?:[A-Za-z0-9_-]+)?\.[A-Za-z][A-Za-z0-9]{1,5}\b/g) || [];
+  for (const m of fileMatches) {
+    if (translated.includes(m)) {
+      found.add(m);
+    }
+  }
+
+  // 2. Quoted code/directive literals originating from English source
+  // Particularly starting with ##, /, --, or containing colons/format specifiers
+  const quotePattern = /"([^"\r\n]+)"|'([^'\r\n]+)'|“([^”\r\n]+)”|‘([^’\r\n]+)’/g;
+  let match;
+  while ((match = quotePattern.exec(source)) !== null) {
+    const rawQuote = match[0];
+    const inner = (match[1] || match[2] || match[3] || match[4] || "").trim();
+    if (!inner) continue;
+
+    const isDirectiveOrCode =
+      /^(?:##|\/|--)/.test(inner) ||
+      /:[ \t]*%\w/.test(inner) ||
+      /^[A-Za-z0-9_#-]+:[ \t]*.+$/.test(inner) ||
+      /%(?:%|[-+0#]*\d*(?:\.\d+)?[cdiouxXeEfgGqs])/.test(inner);
+
+    if (isDirectiveOrCode) {
+      if (translated.includes(rawQuote)) found.add(rawQuote);
+      if (translated.includes(inner)) found.add(inner);
+      const curly = `“${inner}”`;
+      if (translated.includes(curly)) found.add(curly);
+    }
+  }
+
+  return [...found].sort((a, b) => b.length - a.length);
+}
+
 function englishLeftover(key, value) {
   if (!value || !/[A-Za-z]/.test(value)) return false;
   if (isLockedOverrideValue(key, value)) return false;
@@ -270,6 +312,7 @@ function englishLeftover(key, value) {
     ...addonNamePhrasesFromSource(key, value),
     ...camelCaseProperNamesFromSource(key, value),
     ...searchKeywordTermsFromSource(key, value),
+    ...technicalLiteralsFromSource(key, value),
   ])].sort((a, b) => b.length - a.length);
   let stripped = stripCommandsAndCode(maskAllowedAddonNames(value, allowedProperTerms)).replace(/ZZKEEPZZ/g, "");
   if (!stripped) return false;
@@ -286,6 +329,7 @@ function englishLeftover(key, value) {
   if (allowedProperTerms.length) {
     const residual = stripCommandsAndCode(maskAllowedAddonNames(value, allowedProperTerms));
     const residualWords = residual.replace(/ZZKEEPZZ/g, "").split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
+    if (residualWords.some((w) => UI_ACTION_WORDS.has(w.toLowerCase()) && !ALLOWED_ENGLISH.has(w))) return true;
     const residualProse = residualWords.filter((w) =>
       !hasHan(w) &&
       !ALLOWED_ENGLISH.has(w) &&
