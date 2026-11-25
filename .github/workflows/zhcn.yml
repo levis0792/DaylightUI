@@ -57,7 +57,7 @@ run-name: "zhCN ${{ inputs.trigger_note || inputs.upstream_sha || github.run_id 
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       UPSTREAM_REPO: dayightt/DaylightUI
       TARGET_REPO: ${{ github.repository }}
@@ -72,6 +72,8 @@ jobs:
       ZHCN_REVIEW_FALLBACK_MODEL: ${{ vars.ZHCN_REVIEW_FALLBACK_MODEL || 'deepseek-v4.1-flash' }}
       ZHCN_REVIEW_LAST_MODEL: ${{ vars.ZHCN_REVIEW_LAST_MODEL || 'deepseek-v4.1-flash' }}
       ZHCN_BATCH_SIZE: ${{ vars.ZHCN_BATCH_SIZE || '12' }}
+      ZHCN_CONCURRENCY: ${{ vars.ZHCN_CONCURRENCY || '3' }}
+      ZHCN_TIME_BUDGET_MS: ${{ vars.ZHCN_TIME_BUDGET_MS || '1800000' }}
       ZHCN_CONTEXT_LINES: ${{ vars.ZHCN_CONTEXT_LINES || '6' }}
       ZHCN_REVIEW: 'true'
       ZHCN_REVIEW_BATCH_SIZE: '6'
@@ -528,7 +530,7 @@ jobs:
           echo "url=https://github.com/${UPSTREAM_REPO}/pull/${number}" >> "$GITHUB_OUTPUT"
 
       - name: Save checkpoint to state branch after translation failure or deferral
-        if: always() && steps.changed.outputs.needed == 'true' && (steps.translate.outcome == 'failure' || steps.translate.outputs.deferred == 'true') && steps.upstream.outcome == 'success'
+        if: always() && steps.changed.outputs.needed == 'true' && (steps.translate.outcome == 'failure' || steps.translate.outcome == 'cancelled' || steps.translate.outputs.deferred == 'true') && steps.upstream.outcome == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

@@ -912,6 +912,119 @@ async function main() {
     if (oldReviewBaseForRequest === undefined) delete process.env.REVIEW_BASE_URL; else process.env.REVIEW_BASE_URL = oldReviewBaseForRequest;
   }
 
+  // Verify transient primary failure switches straight to an alternate model (never repeats primary)
+  // and soft time budget saves checkpoint and exits with deferred code 2.
+  {
+    const prevEnv = {
+      ZHCN_ROOT: process.env.ZHCN_ROOT,
+      ZHCN_KEYS_FILE: process.env.ZHCN_KEYS_FILE,
+      ZHCN_CHECKPOINT: process.env.ZHCN_CHECKPOINT,
+      ZHCN_CHECKPOINT_SHA: process.env.ZHCN_CHECKPOINT_SHA,
+      OPENAI_MODEL: process.env.OPENAI_MODEL,
+      ZHCN_REVIEW_MODEL: process.env.ZHCN_REVIEW_MODEL,
+      ZHCN_REVIEW_FALLBACK_MODEL: process.env.ZHCN_REVIEW_FALLBACK_MODEL,
+      ZHCN_REVIEW_LAST_MODEL: process.env.ZHCN_REVIEW_LAST_MODEL,
+      ZHCN_BATCH_SIZE: process.env.ZHCN_BATCH_SIZE,
+      ZHCN_REVIEW: process.env.ZHCN_REVIEW,
+      AI_RETRIES: process.env.AI_RETRIES,
+      AI_RETRY_BASE_MS: process.env.AI_RETRY_BASE_MS,
+      API_KEY: process.env.API_KEY,
+      OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+      REVIEW_API_KEY: process.env.REVIEW_API_KEY,
+    };
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zhcn-fallback-budget-"));
+    try {
+      fs.mkdirSync(path.join(tmpDir, "Locales"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "Locales", "zhCN.lua"), 'local _, ns = ...\nns.L = ns.L or {}\nlocal L = ns.L\n', "utf8");
+      fs.writeFileSync(path.join(tmpDir, "Sample.lua"), 'local a = L["Alpha"]\nlocal b = L["Beta"]\n', "utf8");
+      const ckFile = path.join(tmpDir, "checkpoint.json");
+      const keysFile = path.join(tmpDir, "keys.txt");
+      fs.writeFileSync(keysFile, '"Alpha"\n"Beta"\n', "utf8");
+
+      process.env.ZHCN_ROOT = tmpDir;
+      process.env.ZHCN_KEYS_FILE = keysFile;
+      process.env.ZHCN_CHECKPOINT = ckFile;
+      process.env.ZHCN_CHECKPOINT_SHA = "sha-test";
+      process.env.OPENAI_MODEL = "slow-primary";
+      process.env.ZHCN_REVIEW_MODEL = "fast-alt";
+      process.env.ZHCN_REVIEW_FALLBACK_MODEL = "fast-alt";
+      process.env.ZHCN_REVIEW_LAST_MODEL = "fast-alt";
+      process.env.ZHCN_BATCH_SIZE = "1";
+      process.env.ZHCN_REVIEW = "false";
+      process.env.AI_RETRIES = "1";
+      process.env.AI_RETRY_BASE_MS = "1";
+      process.env.API_KEY = "test-key";
+      delete process.env.REVIEW_API_KEY;
+
+      delete require.cache[require.resolve(toolPath)];
+      const t = require(toolPath);
+      const calledModels = [];
+      const fakeFetch = async (_url, init) => {
+        const body = JSON.parse(init.body);
+        calledModels.push(body.model);
+        if (body.model === "slow-primary") {
+          const err = new Error("The operation was aborted due to timeout");
+          err.name = "TimeoutError";
+          throw err;
+        }
+        const reqItems = JSON.parse(body.messages[1].content).strings_to_translate;
+        const map = {};
+        for (const item of reqItems) map[item.original_english] = item.original_english === "Alpha" ? "甲" : "乙";
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(completion(JSON.stringify(map))),
+        };
+      };
+
+      await t.translate({ fetchImpl: fakeFetch, concurrency: 2 });
+      assert.deepEqual(
+        calledModels.filter((m) => m === "slow-primary").length,
+        2,
+        "each batch tries slow-primary once and must not repeat slow-primary in transient repair",
+      );
+      assert.deepEqual(
+        calledModels.filter((m) => m === "fast-alt").length,
+        2,
+        "transient primary timeout must fall back directly to fast-alt",
+      );
+
+      // Now verify soft time budget saves checkpoint and calls exit(2)
+      fs.writeFileSync(path.join(tmpDir, "Locales", "zhCN.lua"), 'local _, ns = ...\nns.L = ns.L or {}\nlocal L = ns.L\n', "utf8");
+      let exitCode = null;
+      let calls = 0;
+      const slowFetch = async (_url, init) => {
+        calls++;
+        await new Promise((r) => setTimeout(r, 30));
+        const body = JSON.parse(init.body);
+        const reqItems = JSON.parse(body.messages[1].content).strings_to_translate;
+        const map = {};
+        for (const item of reqItems) map[item.original_english] = item.original_english === "Alpha" ? "甲" : "乙";
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(completion(JSON.stringify(map))),
+        };
+      };
+      await t.translate({
+        fetchImpl: slowFetch,
+        concurrency: 1,
+        timeBudgetMs: 15,
+        exit: (code) => { exitCode = code; },
+      });
+      assert.equal(exitCode, 2, "time budget must exit with deferred code 2");
+      assert.equal(calls, 1, "time budget must stop starting new batches once exceeded");
+      const saved = t.readCheckpoint().translations;
+      assert.equal(Object.keys(saved).length, 1, "completed batch must be persisted in checkpoint on time budget exit");
+    } finally {
+      for (const [k, v] of Object.entries(prevEnv)) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      delete require.cache[require.resolve(toolPath)];
+    }
+  }
+
   console.log("zhCN tool tests: glossary path, request body, retry and failure handling passed");
 }
 

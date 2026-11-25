@@ -955,6 +955,14 @@ function batchSize() {
   return integerEnv("ZHCN_BATCH_SIZE", 12, 1);
 }
 
+function concurrency() {
+  return integerEnv("ZHCN_CONCURRENCY", 1, 1);
+}
+
+function timeBudgetMs() {
+  return integerEnv("ZHCN_TIME_BUDGET_MS", 0, 0);
+}
+
 function contextWindow() {
   return integerEnv("ZHCN_CONTEXT_LINES", 6, 0);
 }
@@ -1406,17 +1414,31 @@ async function translate(opts = {}) {
   console.log(`Translation memory reused: ${missing.length - remaining.length}`);
   console.log(`AI translation needed: ${remaining.length}`);
 
+  const startedAt = Date.now();
+  const budgetMs = opts.timeBudgetMs !== undefined ? Math.max(0, Number(opts.timeBudgetMs) || 0) : timeBudgetMs();
+  const exitFn = typeof opts.exit === "function" ? opts.exit : (code) => process.exit(code);
   const size = batchSize();
-  const failed = [];
+  const workerCount = opts.concurrency !== undefined ? Math.max(1, Number(opts.concurrency) || 1) : concurrency();
+  const batches = [];
   for (let i = 0; i < remaining.length; i += size) {
-    const batch = remaining.slice(i, i + size).map((k) => [k, cat.get(k).refs.slice(0, 3).join(", "), nearbyContext(cat, k, cat.get(k).refs)]);
-    console.log(`AI batch ${i / size + 1}/${Math.ceil(remaining.length / size)} (${batch.length} strings)`);
+    batches.push({
+      index: i / size + 1,
+      rows: remaining.slice(i, i + size).map((k) => [k, cat.get(k).refs.slice(0, 3).join(", "), nearbyContext(cat, k, cat.get(k).refs)]),
+    });
+  }
+  const failed = [];
+  let nextBatch = 0;
+  let budgetExceeded = false;
+
+  async function processOneBatch(item) {
+    const batch = item.rows;
+    console.log(`AI batch ${item.index}/${batches.length} (${batch.length} strings)`);
     const batchMemory = translationMemory(new Map([...entries, ...Object.entries(result)]));
     try {
       Object.assign(result, await requestBatch(batch, batchMemory, { fetchImpl }));
       writeCheckpoint(result);
     } catch (e) {
-      console.error(`AI batch ${i / size + 1} still failed: ${e.message || e}`);
+      console.error(`AI batch ${item.index} still failed: ${e.message || e}`);
       const recovered = e.translations || {};
       Object.assign(result, recovered);
       writeCheckpoint(result);
@@ -1424,13 +1446,22 @@ async function translate(opts = {}) {
       let repaired = {};
       if (retryRows.length) {
         const useReviewRepair = !!envTrim("REVIEW_API_KEY");
-        const repairModels = useReviewRepair ? reviewModels() : [requestModel()];
+        const isTransientFailure = e.deferred === true || e.timeout === true || retryable(e);
+        const primary = requestModel();
+        const altModels = reviewModels().filter((m) => m !== primary && !isModelExhausted(m));
+        // On transient/timeout failures, never waste another full retry cycle on the exact
+        // same primary model that just timed out; switch straight to an alternate model if one exists.
+        const repairModels = isTransientFailure
+          ? altModels
+          : (useReviewRepair ? reviewModels() : [primary]);
         let repairLastError;
         for (let modelIndex = 0; modelIndex < repairModels.length; modelIndex++) {
           const model = repairModels[modelIndex];
           if (isModelExhausted(model)) continue;
-          const primaryFallback = useReviewRepair && modelIndex === repairModels.length - 1 && model === requestModel();
-          if (primaryFallback && repairLastError && modelIndex > 0) {
+          const primaryFallback = useReviewRepair && modelIndex === repairModels.length - 1 && model === primary;
+          if (isTransientFailure) {
+            console.log("AI transient fallback from " + primary + " to " + model + " for batch " + item.index);
+          } else if (primaryFallback && repairLastError && modelIndex > 0) {
             console.log("AI repair fallback to primary model " + model + " after review model failure: " + (repairLastError.message || repairLastError));
           }
           try {
@@ -1439,9 +1470,11 @@ async function translate(opts = {}) {
               translationMemory(new Map([...entries, ...Object.entries(result)])),
               {
                 fetchImpl,
-                feedback: "若为漏翻请补译；若确认是专有名词/插件名/字体名/语言原名/代码指令，则保留英文。硬性要求：严禁返回空译文，严禁遗漏或破坏%s等占位符，严禁通用UI动作词如Open/Save原样未翻。原失败详情: " + String(e.message || e),
-                review: useReviewRepair,
-                isRepair: true,
+                feedback: isTransientFailure
+                  ? undefined
+                  : "若为漏翻请补译；若确认是专有名词/插件名/字体名/语言原名/代码指令，则保留英文。硬性要求：严禁返回空译文，严禁遗漏或破坏%s等占位符，严禁通用UI动作词如Open/Save原样未翻。原失败详情: " + String(e.message || e),
+                review: useReviewRepair && !primaryFallback,
+                isRepair: !isTransientFailure,
                 route: primaryFallback ? "primary" : (useReviewRepair ? "review" : "primary"),
                 model,
                 logLevel: modelIndex < repairModels.length - 1 ? "warning" : "silent",
@@ -1477,6 +1510,35 @@ async function translate(opts = {}) {
     }
   }
 
+  const workers = Array.from({ length: Math.min(workerCount, Math.max(1, batches.length)) }, async () => {
+    while (nextBatch < batches.length) {
+      if (budgetMs > 0 && Date.now() - startedAt >= budgetMs) {
+        budgetExceeded = true;
+        return;
+      }
+      const item = batches[nextBatch++];
+      await processOneBatch(item);
+    }
+  });
+  await Promise.all(workers);
+
+  if (budgetExceeded && nextBatch < batches.length) {
+    writeCheckpoint(result);
+    const pendingCount = batches.slice(nextBatch).reduce((sum, b) => sum + b.rows.length, 0);
+    const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(reportPath, JSON.stringify({
+      status: "deferred",
+      reason: "time-budget",
+      translations: result,
+      failed,
+      reviewFailures: [],
+    }, null, 2) + "\n", "utf8");
+    console.error(`Translation deferred: time budget reached (${Math.round((Date.now() - startedAt) / 1000)}s); ${pendingCount} string(s) remaining. Progress checkpoint kept for the next run.`);
+    console.log("::notice::Translation deferred after reaching the soft time budget; progress checkpoint saved for the next run.");
+    return exitFn(2);
+  }
+
   if (failed.length) {
     const deferred = failed.filter((item) => item.deferred).length;
     const reportPath = path.join(root, "tools", "reports", "zhcn-ai.json");
@@ -1490,10 +1552,10 @@ async function translate(opts = {}) {
     if (deferred === failed.length) {
       console.error(`Translation deferred: ${deferred} temporary API failure(s). Progress checkpoint kept for the next run.`);
       console.log("::notice::Translation deferred because of a temporary API issue; this run is not a translation-quality failure.");
-      process.exit(2);
+      return exitFn(2);
     }
     console.error(`Translation incomplete: ${failed.length} AI failures (${deferred} deferred). Progress checkpoint kept for the next run.`);
-    process.exit(1);
+    return exitFn(1);
   }
 
   // Second pass (Draft-Review): send high-risk rows AND any rows flagged by
@@ -1508,6 +1570,10 @@ async function translate(opts = {}) {
     const models = reviewModels();
     const reviewBatchSize = integerEnv("ZHCN_REVIEW_BATCH_SIZE", 6, 1);
     for (let i = 0; i < risky.length; i += reviewBatchSize) {
+      if (budgetMs > 0 && Date.now() - startedAt >= budgetMs) {
+        console.log(`Review time budget reached after ${i}/${risky.length} high-risk strings; keeping completed translations.`);
+        break;
+      }
       const keys = risky.slice(i, i + reviewBatchSize);
       const rows = keys.map((k) => [
         k,
@@ -1781,4 +1847,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { appendAdditionsToLocale, isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed, exhaustedModels, isModelExhausted, markModelExhausted, clearExhaustedModels, readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, buildReviewReferenceContext, orderRemainingForContext, specifiers };
+module.exports = { appendAdditionsToLocale, isHardTranslationError, isSoftAllowed, markSoftAllowed, clearSoftAllowed, exhaustedModels, isModelExhausted, markModelExhausted, clearExhaustedModels, readGlossary, readReviewedOverrides, enforceReviewedOverrides, retryable, shouldSwitchModelImmediately, requestOnce, requestBatch, integerEnv, englishLeftover, terminologyViolations, dedupe, highRisk, nearbyContext, relatedMemory, requestModel, reviewModel, reviewModels, batchSize, concurrency, timeBudgetMs, translate, translateConsensus, rebuildAll, baseline, sync, prune, validTranslation, readCheckpoint, writeCheckpoint, clearCheckpoint, applyData, parseModelJson, edgeSpacesMatch, sameEdgeFormat, buildSystemPrompt, buildReviewReferenceContext, orderRemainingForContext, specifiers };
