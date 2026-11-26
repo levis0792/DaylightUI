@@ -248,5 +248,16 @@
   "The account bank doesn't hold that much.": "战团银行没有这么多。",
   "Puts the pieces of item cards back in their first order and sections. Hidden pieces stay hidden.": "将物品卡片的各个部件恢复到初始顺序和分组。已隐藏的部件仍保持隐藏。",
   "Puts the pieces of spell cards back in their first order and sections. Hidden pieces stay hidden.": "将法术卡片的各个部件恢复到初始顺序和分组。已隐藏的部件仍保持隐藏。",
-  "Design": "样式"
+  "Design": "样式",
+  "Click: alarm and stopwatch": "点击：提醒和秒表",
+  "Click: turn the alarm off": "点击：关闭提醒",
+  "This flare's size. Size of all alerts (General) changes every one.": "此光效的大小。“所有警报的尺寸”（常规）会更改每一个。",
+  "Durability and vendor price on item cards": "物品卡片上的耐久度和商人收购价",
+  "How see-through every flare is.": "所有光效的不透明程度。",
+  "How see-through this flare is.": "此光效的不透明程度。",
+  "How many of an item fit in one bag slot (\"Stacks to 20\"), on items that stack. On a Rich card it sits with the small facts.": "针对可堆叠物品，显示单个背包栏位中可容纳的数量（“堆叠上限 20”）。在丰富卡片上，它会与简要信息并列显示。",
+  "The name at the top of each Rich card, its tags and level.": "每张丰富卡片顶部的名称、其标签和等级。",
+  "Reset the creature card's layout": "重置生物卡片布局",
+  "Daylight UI's, profile %s": "Daylight UI 自带，配置文件 %s",
+  "The spell's school (Frost, Fire), in its color.": "法术所属的法术系（冰霜、火焰），以其专属颜色显示。"
 }
