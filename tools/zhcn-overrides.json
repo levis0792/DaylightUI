@@ -264,5 +264,13 @@
   "Draws it under the part below.": "将其绘制在下一项的下方。",
   "It can't go any further on this layer": "在此层级上已无法继续移动",
   "Bring forward": "上移一层",
-  "Send back": "下移一层"
+  "Send back": "下移一层",
+  "Speaker's class colors each bubble's line by who is talking. Characters you can't see the class of, and NPCs, keep the accent.": "“说话者职业”会根据说话者为每个对话气泡的强调线着色。无法获知职业的角色和 NPC 保持强调色。",
+  "Leans /": "斜切 /",
+  "Leans \\": "斜切 \\",
+  "minimap buttons": "小地图按钮",
+  "How fast the animation moves. Lower is calmer, higher is livelier.": "动画播放的速度。数值越低越舒缓，越高越灵动。",
+  "Slosh": "涌动",
+  "Straight, or angled either way. On the right end / puts the top corner out and \\ the bottom one; on the left end it's the other way round. Each end is set on its own.": "平直或任意方向斜切。在右端，/ 使顶角凸出、\\ 使底角凸出；在左端则正好相反。两端各自独立设置。",
+  "Straight, or angled either way. On the right end / puts the top corner out and \\ the bottom one; on the left end it's the other way round. Each end is set on its own. Only when detached on its own.": "平直或任意方向斜切。在右端，/ 使顶角凸出、\\ 使底角凸出；在左端则正好相反。两端各自独立设置。仅在单独分离时生效。"
 }
