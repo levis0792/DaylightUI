@@ -238,5 +238,15 @@
   "The layer your focus's cast bar draws in. Where two pieces overlap, the higher layer draws on top: Background, Low, Medium, High, then Dialogue. Inside the frame or sliding out under it, it draws with the frame instead. Same as frame keeps it with the frame wherever it stands.": "焦点施法条的绘制层级。两个元素重叠时，层级较高者显示在上方：背景、低、中、高、对话。位于框体内或从框体下方滑出时，随框体一同绘制。“与框体相同”使它无论位于何处都与框体保持一致。",
   "The layer your target's cast bar draws in. Where two pieces overlap, the higher layer draws on top: Background, Low, Medium, High, then Dialogue. Inside the frame or sliding out under it, it draws with the frame instead. Same as frame keeps it with the frame wherever it stands.": "你的目标施法条使用的层级。两处重叠时，层级更高的在上方绘制：背景、低、中、高，然后是对话。位于框体内或从框体下方滑出时，它会改为随框体绘制。“与框体相同”会使其无论身在何处都随框体一起绘制。",
   "The thin line under the name, and the light, glow and diamond with it. Same as the name follows the name's color.": "名称下方的细线，以及随附的扫光、光晕和菱形。“与名称相同”会跟随名称的颜色。",
-  "Contested, Sanctuary, Horde or Alliance territory: in the zone's own PvP color, tan, white, or a color you pick.": "争夺中、庇护所、部落或联盟领地：使用地区自身的PvP颜色、棕褐色、白色，或你选择的颜色。"
+  "Contested, Sanctuary, Horde or Alliance territory: in the zone's own PvP color, tan, white, or a color you pick.": "争夺中、庇护所、部落或联盟领地：使用地区自身的PvP颜色、棕褐色、白色，或你选择的颜色。",
+  "Set on item cards": "物品卡片上的套装",
+  "Show from": "起显层数",
+  "Proc Alerts: this client has no aura container, so procs only the game can see (like Redoubt) can't show.": "触发警报：此客户端没有光环容器，因此仅游戏自身可见的触发效果（例如盾牌壁垒）无法显示。",
+  "Turns every proc alert on or off at once. When off, no flare shows and Proc Alerts watches nothing.": "一次性开启或关闭所有触发警报。关闭后，不显示任何光效，且触发警报不会监视任何内容。",
+  "Put how much in the account bank?": "存入多少到战团银行？",
+  "Take how much out of the account bank?": "从战团银行取出多少？",
+  "The account bank doesn't hold that much.": "战团银行没有这么多。",
+  "Puts the pieces of item cards back in their first order and sections. Hidden pieces stay hidden.": "将物品卡片的各个部件恢复到初始顺序和分组。已隐藏的部件仍保持隐藏。",
+  "Puts the pieces of spell cards back in their first order and sections. Hidden pieces stay hidden.": "将法术卡片的各个部件恢复到初始顺序和分组。已隐藏的部件仍保持隐藏。",
+  "Design": "样式"
 }
