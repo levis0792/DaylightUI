@@ -259,5 +259,10 @@
   "The name at the top of each Rich card, its tags and level.": "每张丰富卡片顶部的名称、其标签和等级。",
   "Reset the creature card's layout": "重置生物卡片布局",
   "Daylight UI's, profile %s": "Daylight UI 自带，配置文件 %s",
-  "The spell's school (Frost, Fire), in its color.": "法术所属的法术系（冰霜、火焰），以其专属颜色显示。"
+  "The spell's school (Frost, Fire), in its color.": "法术所属的法术系（冰霜、火焰），以其专属颜色显示。",
+  "Draws it over the part above.": "将其绘制在上一项的上方。",
+  "Draws it under the part below.": "将其绘制在下一项的下方。",
+  "It can't go any further on this layer": "在此层级上已无法继续移动",
+  "Bring forward": "上移一层",
+  "Send back": "下移一层"
 }
