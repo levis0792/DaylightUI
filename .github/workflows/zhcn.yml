@@ -77,6 +77,7 @@ jobs:
       ZHCN_CONTEXT_LINES: ${{ vars.ZHCN_CONTEXT_LINES || '6' }}
       ZHCN_REVIEW: 'true'
       ZHCN_REVIEW_BATCH_SIZE: '6'
+      ZHCN_REVIEW_ALL_MAX: ${{ vars.ZHCN_REVIEW_ALL_MAX || '120' }}
       ZHCN_CONSENSUS_MODELS: deepseek-v4.1-flash
       ZHCN_JUDGE_MODEL: deepseek-v4.1-flash
       ZHCN_CONSENSUS_BATCH_SIZE: ${{ vars.ZHCN_CONSENSUS_BATCH_SIZE || '10' }}

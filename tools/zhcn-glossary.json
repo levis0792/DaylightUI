@@ -11,8 +11,8 @@
   "crit": "爆击",
   "critical strike": "爆击",
   "minimap": [
-    "微缩地图",
-    "小地图"
+    "小地图",
+    "微缩地图"
   ],
   "tooltip": [
     "鼠标提示",
@@ -239,5 +239,7 @@
   "small facts": "简要信息",
   "Rich card": "丰富卡片",
   "Proc Alerts": "触发警报",
-  "Proc alerts": "触发警报"
+  "Proc alerts": "触发警报",
+  "account bank": "战团银行",
+  "Account bank": "战团银行"
 }

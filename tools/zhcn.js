@@ -1139,7 +1139,7 @@ function buildSystemPrompt(glossary, opts = {}) {
 
   if (opts.review) {
     baseRules.unshift(
-      "You are the senior Simplified Chinese reviewer for DaylightUI. Each item includes original_english, source_location, nearby_ui_text, and draft_zhCN. Review draft_zhCN carefully: fix any out-of-context mistranslations, swapped placeholder semantics, glossary inconsistencies, or missing leading/trailing spaces; keep accurate drafts intact."
+      "You are the senior Simplified Chinese reviewer for DaylightUI (World of Warcraft addon). Each item includes original_english, source_location, nearby_ui_text, and draft_zhCN. Do NOT rubber-stamp draft_zhCN: first understand original_english in context, then actively rewrite draft_zhCN whenever you spot (1) typos, extra/missing characters, or broken Chinese grammar; (2) stiff machine-translation phrasing — polish into crisp, idiomatic mainland China WoW UI wording; (3) context mistranslations (e.g. Set=套装 on item cards, Show from=起显层数 for stack threshold, bubble's line=强调线, official zhCN spell names like Redoubt=盾牌壁垒); (4) symbol/direction mismatches (e.g. / vs \\); or (5) inconsistent wording across sibling options in the same panel. Preserve placeholders, WoW escape codes, and exact leading/trailing spaces."
     );
     baseRules.push(
       "long_description_reference is READ-ONLY CONTEXT (只读参考，禁止输出到返回的 JSON 中). Use it only to review strings_to_translate: (a) short option labels and Chinese names quoted in long descriptions must agree (e.g. 最长优先, 装备方案); (b) symmetric options in one group must use consistent wording (e.g. Buff order / Debuff order both use 排序); (c) use long explanations to resolve ambiguous English in this UI (Channel ticks = cast-bar tick marks, Groups = bag grouping, not party grouping). Return ONLY keys from strings_to_translate; never output long_description_reference keys."
@@ -1558,68 +1558,82 @@ async function translate(opts = {}) {
     return exitFn(1);
   }
 
-  // Second pass (Draft-Review): send high-risk rows AND any rows flagged by
-  // terminologyViolations along with their first-pass draft for targeted review.
+  // Second pass (Draft-Review): for normal incremental updates (<= ZHCN_REVIEW_ALL_MAX),
+  // review every new string so typos and stiff phrasing never slip through; for huge
+  // releases, focus on high-risk rows and terminology violations.
   const preReviewMap = new Map(Object.entries(result));
   const termViolationKeys = new Set(terminologyViolations(preReviewMap).map((item) => item.key));
-  const risky = remaining.filter((k) => highRisk(k, (cat.get(k).refs || [])[0]) || termViolationKeys.has(k));
+  const reviewAllMax = integerEnv("ZHCN_REVIEW_ALL_MAX", 0, 0);
+  const reviewAll = reviewAllMax > 0 && remaining.length <= reviewAllMax;
+  const risky = reviewAll
+    ? [...remaining]
+    : remaining.filter((k) => highRisk(k, (cat.get(k).refs || [])[0]) || termViolationKeys.has(k));
   const reviewFailures = [];
   if (risky.length && process.env.ZHCN_REVIEW !== "false") {
     const reviewMemory = translationMemory(new Map([...entries, ...Object.entries(result)]));
     const reviewTranslations = new Map([...entries, ...Object.entries(result)]);
     const models = reviewModels();
     const reviewBatchSize = integerEnv("ZHCN_REVIEW_BATCH_SIZE", 6, 1);
+    const reviewBatches = [];
     for (let i = 0; i < risky.length; i += reviewBatchSize) {
-      if (budgetMs > 0 && Date.now() - startedAt >= budgetMs) {
-        console.log(`Review time budget reached after ${i}/${risky.length} high-risk strings; keeping completed translations.`);
-        break;
-      }
-      const keys = risky.slice(i, i + reviewBatchSize);
-      const rows = keys.map((k) => [
-        k,
-        cat.get(k).refs.slice(0, 3).join(", "),
-        nearbyContext(cat, k, cat.get(k).refs),
-        result[k],
-      ]);
-      const reviewReferences = buildReviewReferenceContext(cat, keys, reviewTranslations);
-      let reviewed;
-      let lastError;
-      let previousReviewError;
-      for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
-        const model = models[modelIndex];
-        if (isModelExhausted(model)) continue;
-        const primaryFallback = !!envTrim("REVIEW_API_KEY") && modelIndex === models.length - 1 && model === requestModel();
-        if (primaryFallback && previousReviewError && modelIndex > 0) {
-          console.log("Review fallback to primary model " + model + " after review model failure: " + (previousReviewError.message || previousReviewError));
-        }
-        try {
-          reviewed = await requestBatch(rows, reviewMemory, {
-            fetchImpl,
-            review: true,
-            route: primaryFallback ? "primary" : "review",
-            model,
-            reviewReferences,
-            logLevel: modelIndex < models.length - 1 ? "warning" : "silent",
-            annotateErrors: false,
-          });
-          previousReviewError = undefined;
-          break;
-        } catch (e) {
-          lastError = e;
-          previousReviewError = e;
-          if (shouldSwitchModelImmediately(e)) {
-            markModelExhausted(model);
-          }
-          if (modelIndex === models.length - 1) {
-            const message = "Review failed after all fallback models for batch " + (i / reviewBatchSize + 1) + ": " + (e.message || e);
-            console.error(message);
-            console.log("::error::" + message);
-          }
-        }
-      }
-      if (reviewed) Object.assign(result, reviewed);
-      else for (const k of keys) reviewFailures.push({ key: k, error: String((lastError && lastError.message) || lastError || "review omitted") });
+      reviewBatches.push({ index: i / reviewBatchSize + 1, keys: risky.slice(i, i + reviewBatchSize) });
     }
+    let nextReview = 0;
+    const reviewWorkers = Array.from({ length: Math.min(workerCount, Math.max(1, reviewBatches.length)) }, async () => {
+      while (nextReview < reviewBatches.length) {
+        if (budgetMs > 0 && Date.now() - startedAt >= budgetMs) {
+          console.log(`Review time budget reached after ${nextReview}/${reviewBatches.length} review batches; keeping completed translations.`);
+          return;
+        }
+        const batchItem = reviewBatches[nextReview++];
+        const keys = batchItem.keys;
+        const rows = keys.map((k) => [
+          k,
+          cat.get(k).refs.slice(0, 3).join(", "),
+          nearbyContext(cat, k, cat.get(k).refs),
+          result[k],
+        ]);
+        const reviewReferences = buildReviewReferenceContext(cat, keys, reviewTranslations);
+        let reviewed;
+        let lastError;
+        let previousReviewError;
+        for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
+          const model = models[modelIndex];
+          if (isModelExhausted(model)) continue;
+          const primaryFallback = !!envTrim("REVIEW_API_KEY") && modelIndex === models.length - 1 && model === requestModel();
+          if (primaryFallback && previousReviewError && modelIndex > 0) {
+            console.log("Review fallback to primary model " + model + " after review model failure: " + (previousReviewError.message || previousReviewError));
+          }
+          try {
+            reviewed = await requestBatch(rows, reviewMemory, {
+              fetchImpl,
+              review: true,
+              route: primaryFallback ? "primary" : "review",
+              model,
+              reviewReferences,
+              logLevel: modelIndex < models.length - 1 ? "warning" : "silent",
+              annotateErrors: false,
+            });
+            previousReviewError = undefined;
+            break;
+          } catch (e) {
+            lastError = e;
+            previousReviewError = e;
+            if (shouldSwitchModelImmediately(e)) {
+              markModelExhausted(model);
+            }
+            if (modelIndex === models.length - 1) {
+              const message = "Review failed after all fallback models for batch " + batchItem.index + ": " + (e.message || e);
+              console.error(message);
+              console.log("::error::" + message);
+            }
+          }
+        }
+        if (reviewed) Object.assign(result, reviewed);
+        else for (const k of keys) reviewFailures.push({ key: k, error: String((lastError && lastError.message) || lastError || "review omitted") });
+      }
+    });
+    await Promise.all(reviewWorkers);
   }
   console.log("High-risk strings reviewed: " + risky.length + (reviewFailures.length ? " (" + reviewFailures.length + " failed)" : ""));
 
