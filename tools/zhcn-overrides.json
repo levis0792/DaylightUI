@@ -272,5 +272,18 @@
   "How fast the animation moves. Lower is calmer, higher is livelier.": "动画播放的速度。数值越低越舒缓，越高越灵动。",
   "Slosh": "涌动",
   "Straight, or angled either way. On the right end / puts the top corner out and \\ the bottom one; on the left end it's the other way round. Each end is set on its own.": "平直或任意方向斜切。在右端，/ 使顶角凸出、\\ 使底角凸出；在左端则正好相反。两端各自独立设置。",
-  "Straight, or angled either way. On the right end / puts the top corner out and \\ the bottom one; on the left end it's the other way round. Each end is set on its own. Only when detached on its own.": "平直或任意方向斜切。在右端，/ 使顶角凸出、\\ 使底角凸出；在左端则正好相反。两端各自独立设置。仅在单独分离时生效。"
+  "Straight, or angled either way. On the right end / puts the top corner out and \\ the bottom one; on the left end it's the other way round. Each end is set on its own. Only when detached on its own.": "平直或任意方向斜切。在右端，/ 使顶角凸出、\\ 使底角凸出；在左端则正好相反。两端各自独立设置。仅在单独分离时生效。",
+  "Missing on %d of %d": "有 %d 名缺少（共 %d 名）",
+  "Custom orb color": "自定义光球颜色",
+  "How long each orb takes to fly into the bar. Longer flights also linger a little longer where they bloom.": "每个光球飞入计量条所需的时间。飞行时间越长，绽放后停留的时间也略长。",
+  "Orb color": "光球颜色",
+  "Orb flight time": "光球飞行时间",
+  "Orb size": "光球大小",
+  "The XP orbs' color while Orb color is set to One color.": "当“光球颜色”设为“单色”时经验光球的颜色。",
+  "/dui whatsnew - what's new in Daylight UI 2.4.2: XP orbs and missing buffs": "/dui whatsnew - Daylight UI 2.4.2 的新增内容：经验光球和缺失的增益",
+  "Orbs on": "开启光球",
+  "Well Fed": "进食充分",
+  "Also reminds you this many minutes before Well Fed runs out. At 0, never early.": "在“进食充分”结束前这么多分钟也提醒你。设为 0 则从不提前提醒。",
+  "Right-click a spell group, a class buff, Well Fed or a scroll to choose what the icon uses. Scroll over a spell to choose its rank.": "右键点击法术组、职业增益、“进食充分”或卷轴，可选择图标使用的法术。将鼠标悬停在法术上滚动可选择其等级。",
+  "Well Fed show below, in minutes": "“进食充分”剩余低于此分钟数时显示"
 }
